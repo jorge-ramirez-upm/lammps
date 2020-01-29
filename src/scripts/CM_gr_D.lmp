@@ -1,0 +1,49 @@
+# Analysis of centre of mass g(r) and diffusion
+# RUN:
+# lammps -v F A3N10NC200rho0.85 -v C 10.0
+# where: 
+#    - F is the name of the file without _CM, lammpsdat and/or lammpstrj
+#    - C is the cutoff for g(r)
+echo            none
+
+units		lj
+atom_style	bond
+
+#special_bonds   fene 
+
+boundary        p p p
+
+log $F_gr.log
+
+print       "*****************************************************"
+print       "Reading Configuration file... $F_CM.lammpsdat"
+print       "*****************************************************"
+read_data       $F_CM.lammpsdat extra/bond/per/atom 10 extra/special/per/atom 10
+
+neighbor        0.6 multi
+neigh_modify    every 1 delay 1 check yes
+comm_modify     vel yes
+# I think it is necessary for bond creation
+comm_modify cutoff 4.0
+
+#bond_style      fene
+#bond_coeff      1 30.0 1.5 1.0 1.0  # Original Kremer-Grest
+
+pair_style lj/cut $C
+pair_modify     shift yes
+pair_coeff  * * 1.0 1.0 
+
+fix 1 all nve
+fix         2 all langevin 1.0 1.0 2.0 48279 zero yes # Remove box COM motion by random 
+
+compute msd all msd
+
+thermo_style	custom step temp epair etotal press vol c_msd[4]
+thermo		1000
+
+timestep	0.01
+compute rdf all rdf 100 1 1 2 2 3 3
+fix 3 all ave/time 1000 10 10000 c_rdf[*] file $F.gr mode vector
+
+#rerun 		$F_CM.lammpstrj start 20000000 stop 20000001 dump x y z box yes label id id format native purge yes add yes
+rerun 		$F_CM.lammpstrj dump type x y z box yes replace yes

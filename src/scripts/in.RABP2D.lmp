@@ -1,0 +1,42 @@
+# Test RABP potential
+
+dimension	2
+units		lj
+atom_style	ellipsoid
+
+# lattice		sq 0.1273239545 # Area fraction
+lattice		sq 0.6 # Volume fraction
+region		box block 0 20 0 20 0 0.1
+create_box	1 box
+create_atoms	1 box
+set		type 1 mass 1.0 
+set		type 1 shape 1.0 1.0 1.0 
+set		type 1 quat/random 29898 
+# mass		1 1.0
+
+pair_style	RABP 1.5
+# i j epsilon sigma epsilon_rep theta_max theta_tail with_the_patch cut_lj
+# pair_coeff	1 1 20.0 1.0 1.0 1.57 0.25 1 1.122462048
+pair_coeff	1 1 20.0 1.0 1.0 0.7853981634 0.436332313 1 1.5
+pair_modify	shift yes
+
+write_data test.RABP.lammpsdat
+
+velocity	all create 1.0 87287
+
+neighbor	0.3 bin
+neigh_modify	every 20 delay 0 check no
+
+# Parameters of bd/ABP: Dt Fp Seed
+#fix		1 all nve 
+fix		1 all nvt/asphere temp 1.0 1.0 0.5 
+fix		2 all enforce2d
+
+compute orient all property/atom quatw quati quatj quatk
+
+dump		id all custom 100 RABP.lammpstrj id xu yu zu c_orient[1] c_orient[2] c_orient[3] c_orient[4]
+#dump_modify id sort id
+
+thermo		100
+timestep 0.0001 
+run		20000

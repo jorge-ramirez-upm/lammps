@@ -1,0 +1,42 @@
+# 3d Lennard-Jones melt
+
+units		lj
+atom_style	atomic
+dimension 2
+
+variable S equal 2.5 # Radius of shoulder
+variable E equal 1.0 # Height of shoulder (Gribova 1.0)
+variable D equal 0.291 # Number density
+variable L equal 20 # Box size
+variable N equal $L*$L
+
+variable T equal 0.1
+variable P equal 1.5
+
+log Gribova_N$N_S$S_E$E_P$P_T$T_Analysis.log
+
+lattice		sq $D 
+region		box block 0 $L 0 $L -0.5 0.5
+create_box	1 box
+create_atoms	1 box
+mass		1 1.0
+
+velocity	all create $T 87287
+
+variable C equal $S+0.3 # Cut-off
+pair_style	gribova $C
+# i j sigmaS epsilonS
+pair_coeff	1 1 $S $E
+
+neighbor	0.3 bin
+neigh_modify	every 20 delay 0 check no
+
+#fix		1 all npt temp $T $T 1.0 iso $P $P 1.0
+#fix		1 all nve
+
+#dump		id all atom 1000 Gribova_N$N_S$S_E$E_P$P_T$T.lammpstrj
+#dump		id all custom 1000 Gribova_N$N_S$S_E$E_P$P_T$T_unfolded_Analysis.lammpstrj id type xu yu zu
+#dump_modify id sort id
+
+thermo		1
+rerun 		loco.lammpstrj dump type x y z box yes replace yes

@@ -1,0 +1,120 @@
+# Kremer-Grest model - BRUSH + CHARGES
+# HOW TO RUN: 
+# lmp.exe -v F [LAMMPSDAT FILE without Extension] -i [LAMMPS SCRIPT] 
+# lmp.exe -v F .\R100N100rho0.01lambda0.2 -i .\in.equilibration.rod.springs 
+
+echo            none
+
+units		lj
+atom_style      angle	
+special_bonds   fene
+dimension 2
+
+boundary        p p p
+
+log $F.equilibration.log
+print       "*****************************************************"
+print       "Reading Configuration file... $F.lammpsdat"
+print       "*****************************************************"
+read_data       $F.lammpsdat
+
+neighbor        0.6 multi
+neigh_modify	every 1 delay 1 check yes
+comm_modify 	vel yes
+
+bond_style      fene
+bond_coeff      1 30.0 1.5 1.0 1.0  # Original Kremer-Grest
+
+angle_style     cosine/delta
+angle_coeff     1 1000.0 180.0
+
+timestep        0.01
+thermo          1000
+thermo_modify norm no
+
+pair_style dpd 1.0 1.0 122347
+pair_coeff * * 25 4.5 1.0
+
+velocity        all create 1.0 4839876 mom yes rot yes dist gaussian 
+
+print		""
+print       "*****************************************************"
+print       "STAGE 1: LOOP limiting displacement"
+print       "*****************************************************"
+label       loop
+variable    m equal 8 				# NUMBER OF LOOP STEPS
+variable    r equal 1000				# NUMBER OF SIMULATION STEPS INSIDE EACH ITERATION
+variable    a loop $m
+variable    e equal "exp((v_a - v_m)*ln(10))"
+print       ""
+print       "*** Iteration $a : Maximum displacement: $e ; $r steps ***" 
+print       ""
+fix 1 all nve/limit $e
+run         $r post no
+reset_timestep 0
+next	    a
+jump	    SELF loop
+
+variable    a delete
+variable    r delete
+variable    m delete 
+variable    e delete
+
+print		""
+print       "*****************************************************"
+print       "STAGE 2: DPD run soft potential (a=25 kT, t=500 tau)"
+print       "*****************************************************"
+run 50000 post no
+
+print		""
+print       "*****************************************************"
+print       "STAGE 3: Fast push-off: LOOP DPD a (25kT->1000kT)"
+print       "*****************************************************"
+unfix 1
+fix 1 all nve
+label       loop2
+variable    m equal 10 				# NUMBER OF LOOP STEPS
+variable    r equal 1000				# NUMBER OF SIMULATION STEPS INSIDE EACH ITERATION
+variable    a loop $m
+variable    e equal "25.0 + (1000.0-25.0)*exp((v_a - v_m)*ln(10))"
+variable    e equal "25.0 + (1000.0-25.0)*exp((v_a - v_m)*0.75)"
+print		""
+print       "*** Iteration $a : DPD Repulsion: $e ; $r steps ***"
+print		""
+pair_coeff * * $e 4.5 1.0
+run         $r post no
+reset_timestep 0
+next	    a
+jump	    SELF loop2
+
+variable    a delete
+variable    r delete
+variable    m delete 
+variable    e delete
+
+print		""
+print       "*****************************************************"
+print       "STAGE 4: Full LJ (WCA) potential, t=10000 tau"
+print       "*****************************************************"
+pair_style hybrid/overlay lj/cut 1.122462048 kinesin 2.0
+#pair_style lj/cut 1.122462048
+pair_modify     shift yes
+pair_coeff  * * lj/cut 1.0 1.0 1.122462048
+pair_coeff  * * kinesin 10.0
+
+# Parameters of bd/ABP: T Dt Fp Seed
+unfix 1
+fix		1 all bd/ABP 1.0 1.0 0.0 438985 
+
+#fix         2 all langevin 0.5 0.5 2.0 48279 zero yes # Remove center of mass motion by random force
+
+#dump            coord all custom 1000 $F_EQ.lammpstrj.gz id xu yu zu
+dump            coord all atom 1000 $F_EQ.lammpstrj
+dump_modify coord sort id  
+
+thermo 1000
+reset_timestep 0
+timestep        0.0001
+run 1000000
+write_restart $F.equilibrated.dat
+write_data  $F.equilibrated.lammpsdat nocoeff

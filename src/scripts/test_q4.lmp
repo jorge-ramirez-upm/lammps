@@ -1,0 +1,29 @@
+units		lj
+atom_style	atomic
+dimension 2
+
+# Creamos red cristalina 2D cuadrada lado 1
+lattice		sq 1.0
+region		box block 0 10 0 10 -0.5 0.5
+create_box	1 box
+create_atoms	1 box
+mass		1 1.0
+
+pair_style lj/cut 1.1
+pair_coeff	1 1 1.0 1.0
+
+# Calculamos q4 (nnn = numero vecinos, degree = grado) para cada átomo
+compute order4 all hexorder/atom nnn 4 degree 4 cutoff 1.1
+# Podemos promediar el valor de q4 entre todos los átomos
+compute o4real all reduce ave c_order4[1] # Parte real de q4
+compute o4imag all reduce ave c_order4[2] # Parte imaginaria de q4
+compute o4mod all reduce ave c_order4[3]  # Módulo de q4
+
+# El parámetro de orden se puede guardar en el dump para cada átomo
+dump		id all custom 1000 test.lammpstrj id type xu yu zu c_order4[1] c_order4[2] c_order4[3] 
+dump_modify id sort id
+
+# El promedio entre todos los átomos se puede mostrar en cada línea del LOG
+thermo_style custom step temp pe etotal press vol c_o4real c_o4imag c_o4mod
+
+run 0

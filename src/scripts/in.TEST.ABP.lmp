@@ -1,0 +1,77 @@
+#3d Lennard-Jones melt
+
+units		lj
+atom_style	atomic
+dimension 2
+
+variable S equal 1.00 # Radius of shoulder (Gribova 1.15 1.35 1.55 1.8)
+variable P equal 0.60 # Packing fraction
+variable D equal 1.273239545*$P # Number density (Diego 0.3 0.6 0.8)
+variable V equal 1.0 # Velocity of active particles
+variable Dt equal 1 # Translational Diffusion coefficient
+variable Dr equal 0.005 # Rotational Diffusion coefficient
+variable T equal 1.0
+variable dt equal 0.00001 # Time step
+
+log GribovaABP_S$SD$DV$VDt${Dt}T$Tdt${dt}.log
+
+region		box block 0 64 0 64 -0.5 0.5
+lattice		sq $D
+create_box	2 box
+create_atoms	1 box
+set             group all type/fraction 2 0.75 34053
+mass		1 1.0
+mass            2 1.0
+
+group active type 1
+group passive type 2
+
+#variable C equal $S+0.3 # Cut-off
+#pair_style	gribova $C
+# i j sigmaS 
+#pair_coeff	1 1 $S
+
+pair_style  lj/cut 1.122462048
+pair_coeff  * * 1.0 1.0 1.122462048
+pair_modify shift yes
+
+
+neighbor	0.3 bin
+neigh_modify	every 20 delay 0 check no
+
+# BD Run
+# Parameters of bd/ABP: Dt Fp Seed
+fix		1 active bd/ABP $T ${Dt} ${Dr} $V 438985
+fix             2 passive bd/ABP $T ${Dt} ${Dr} 0.0 654389
+
+#dump            id all atom 100000 GribovaABP_S$SD$DV$VDt${Dt}T$Tdt${dt}.lammpstrj
+dump		id all custom 20000 GribovaABP_S$SD$DV$V.lammpstrj id type xu yu zu vx vy vz
+dump_modify id sort id
+
+#comm_modify cutoff 5.5
+#compute RDF all rdf 1000 1 1 cutoff 5.0
+#fix OUT all ave/time 10000 1 10000 c_RDF[*] file OUTPUT.rdf mode vector  
+
+compute         act active msd
+compute         pass passive msd
+compute         msd all msd
+compute         msd2 all msd/nongauss
+thermo_style  custom step temp pe etotal press c_act[4] c_pass[4] c_msd[4] c_msd2[1] c_msd2[2] c_msd2[3]
+
+
+
+thermo		1000
+timestep ${dt} # Uso 1e-5 (Stenhammar2014 paper 5e-5)
+
+restart 200000 a.restart1.dat a.restart2.dat
+
+run		1000000000 
+
+#comm_modify cutoff 5.0
+#compute RDF all rdf 100 1 1 cutoff 5.0
+#fix OUT all ave/time 100 1 100 c_RDF[*] file OUTPUT.rdf mode vector  
+
+#compute         msd all msd
+#thermo_style  custom step temp pe etotal press c_msd[4]
+
+

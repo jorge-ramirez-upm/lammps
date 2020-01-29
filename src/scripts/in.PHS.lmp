@@ -1,0 +1,40 @@
+# 2d Pseudo Hard-Sphere melt
+
+units		lj
+atom_style	atomic
+dimension 2
+
+variable S equal 10 # Simulation box size
+variable R equal 50 # Repulsive exponent
+variable A equal 49 # Attractive exponent
+variable D equal 0.8 # Number density
+variable T equal 1.0 # Temperature
+
+log PHS_T$T.log
+
+lattice		sq $D 
+region		box block 0 $S 0 $S -0.5 0.5
+create_box	1 box
+create_atoms	1 box
+mass		1 1.0
+
+velocity	all create $T 87287
+
+variable C equal ($R/$A)^(1/($R-$A)) # Cut-off
+pair_style	PHS $C $R $A
+# i j sigmaS epsilonS
+pair_coeff	1 1 1.0 1.0
+pair_modify shift yes
+
+neighbor	0.3 bin
+neigh_modify	every 20 delay 0 check no
+
+fix		1 all nvt temp $T $T 1.0
+#fix		1 all nve
+
+dump		id all atom 100 PHS_T$T.lammpstrj
+dump_modify id sort id
+
+thermo		100
+timestep 0.0025
+run		500000

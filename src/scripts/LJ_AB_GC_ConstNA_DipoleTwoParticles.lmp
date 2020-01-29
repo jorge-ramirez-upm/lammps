@@ -1,0 +1,78 @@
+# Big colloid particles and small LJ particles
+
+units		lj
+atom_style	hybrid sphere dipole
+dimension	2
+
+variable D equal 0.8 # Densidad
+
+variable L equal 10
+variable N equal round($L*$L/10)
+variable p equal 0.5
+
+variable P equal 0.5 # Pressure
+variable T equal 0.5 # Temperature
+variable E equal 0.5 # Interaction energy A-B
+variable m equal 0.5 # Dipole A
+
+log LJ_AB_GC_T$T_P$P_E$E_m$m.log
+
+region box block 0 4 0 4 -0.5 0.5
+create_box	2 box
+create_atoms 1 single 1.45 2.0 0.0
+create_atoms 2 single 2.55 2.0 0.0
+
+#set		group all type/fraction 2 $p 23984
+#set		group all type/fraction 2 0.5 23984
+
+set		type 1 mass 1
+set		type 2 mass 1
+set		type 1 dipole/random 98934 1.0 # Dipole A
+set		type 2 dipole/random 98934 $m # Dipole B
+set		type 1 charge 0
+set		type 2 charge 0
+set		type 1 diameter 1.0
+set		type 2 diameter 1.0
+
+velocity	all create $T 87287 loop geom # Temperatura
+
+# multi neighbor and comm for efficiency
+
+neighbor	0.3 multi
+neigh_modify	delay 0
+comm_modify     mode multi
+
+# colloid potential
+
+pair_style	lj/cut/dipole/cut 2.5 10.0
+pair_coeff	1 1  1.0 1.0 
+pair_coeff	1 2  $E 1.0 
+pair_coeff	2 2  1.0 1.0 
+pair_modify shift yes
+
+#write_data LJ_AB_GC_T$T_E$E_p$p.lammpsdat nocoeff
+
+fix		1 all npt/sphere temp $T $T 1.0 iso $P $P 1.0 disc update dipole
+#fix		1 all nvt temp $T $T 1.0 
+#fix     1 all nve
+#fix		1 all nve/sphere update dipole
+fix		2 all enforce2d
+
+fix SGMC all atom/swap 100 1 943984 $T types 1 2
+#fix SGMC all atom/swap 10 10 943984 $T types 1 2
+
+#dump		1 all atom 1000 LJ_AB_GC_T$T_P$P_E$E_m$m.lammpstrj 
+dump		1 all custom 10 LJ_AB_GC_T$T_P$P_E$E_m$m.lammpstrj id type x y mux muy
+dump_modify 1 sort id flush yes
+
+compute cc1 all chunk/atom type
+compute myChunk1 all property/chunk cc1 count
+
+
+
+thermo_style	custom step temp epair etotal press vol c_myChunk1[1]
+thermo		1000
+
+timestep	0.01
+
+run		100000

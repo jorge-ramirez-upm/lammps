@@ -1,0 +1,47 @@
+# 3d Lennard-Jones melt
+
+units		lj
+atom_style	atomic
+dimension 2
+
+variable S equal 2.5 # Radius of shoulder (Gribova 1.15 1.35 1.55 1.8)
+variable E equal 10.0 # Height of shoulder (Gribova 1.0)
+variable D equal 0.6 # Number density (Diego 0.3 0.6 0.8)
+variable V equal 0.0 # Velocity of active particles
+variable T equal 1.0 # Temperature (for MD short equilibration)
+variable Dt equal 1.0 # Diffusion coefficient
+variable dt equal 0.0001 # Time step, Stenhammar2014 paper 5e-5
+
+log	GribovaABP_S$SE$ED$DV$VDt${Dt}T$Tdt${dt}.log
+lattice		sq $D
+region		box block 0 64 0 64 -0.5 0.5
+create_box	1 box
+create_atoms	1 box
+mass		1 1.0
+
+variable C equal $S+0.3 # Cut-off
+pair_style	gribova $C
+# i j sigmaS epsilonS
+pair_coeff	1 1 $S $E 
+
+neighbor	0.3 bin
+neigh_modify	every 20 delay 0 check no
+
+# BD Run
+# Parameters of bd/ABP: T Dt Fp Seed
+fix		1 all bd/ABP $T ${Dt} $V 438985 
+
+dump		id all atom 1000 GribovaABP_S$SE$ED$DV$VDt${Dt}T$Tdt${dt}.lammpstrj
+#dump		id all custom 1000 GribovaABP_S$SE$ED$DV$VDt${Dt}T$Tdt${dt}.lammpstrj id xu yu zu vx vy
+dump_modify id sort id
+
+comm_modify cutoff 5.5
+compute RDF all rdf 100 1 1 cutoff 5.0
+fix OUT all ave/time 100 100 10000 c_RDF[*] file GribovaABP_S$SE$ED$DV$VDt${Dt}T$Tdt${dt}.rdf mode vector
+
+compute         msd all msd
+thermo_style  custom step temp pe etotal press c_msd[4]
+
+thermo		100
+timestep ${dt} 
+run		5000000 

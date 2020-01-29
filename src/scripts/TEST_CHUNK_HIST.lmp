@@ -1,0 +1,55 @@
+# Big lj particles and small LJ particles
+
+units		lj
+atom_style	atomic
+dimension	2
+
+variable T equal 0.5 # Temperature
+variable P equal 0.5 # Pressure
+
+log ljT$T_P$P.log
+
+lattice		sq 0.5 # Densidad
+region		box block 0 64 0 64 -0.5 0.5
+create_box	1 box
+create_atoms	1 box
+
+mass 1 1
+
+velocity	all create $T 87287 loop geom # Temperatura
+
+# multi neighbor and comm for efficiency
+
+neighbor	1 multi
+neigh_modify	delay 0
+comm_modify     mode multi
+
+# lj potential
+
+pair_style	lj/cut 2.5
+pair_coeff	1 1  1.0 1.0 
+pair_modify shift yes
+
+fix		1 all npt temp $T $T 2.0 iso $P $P 2.0
+fix		2 all enforce2d
+
+dump		1 all atom 1000 ljT$T_P$P.lammpstrj 
+
+# HISTOGRAM STUFF
+variable N equal 10 # Number of bins in x and w direction
+variable N2 equal $N*$N
+variable dx equal 1.0/$N
+compute BINS all chunk/atom bin/2d x lower ${dx} y lower ${dx} nchunk every units reduced
+compute NUM all property/chunk BINS count
+variable VBIN equal vol/${N2} # Volume of each chunk
+variable PHI vector c_NUM/v_VBIN
+variable ONE vector c_NUM/c_NUM
+fix densAA all ave/histo 1 100 1000 0 100 100 c_NUM mode vector file lolo.tmp
+fix fPHI all ave/histo 100 100 10000 0 1 50 v_PHI mode vector file lolo2.tmp
+
+thermo_style	custom step temp epair etotal press vol c_NUM[1] v_PHI[1] v_ONE[1]
+thermo		1000
+
+timestep	0.01
+
+run		1000000

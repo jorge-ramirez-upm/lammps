@@ -1,0 +1,25 @@
+# 3d Lennard-Jones melt
+
+read_restart    tmp.long.restart
+
+neighbor	0.3 bin
+neigh_modify	delay 0 every 20 check no
+
+fix		1 all nve
+
+compute         p all pressure thermo_temp
+
+#fix             gcorr all ave/correlate 1 100 100 &
+#                c_p &
+#                type auto title1 "Shear Stress Autocorrelations" &
+#                file tmp.corr
+
+fix             gcorr all ave/correlate/long 1 100 &
+                c_p &
+                type auto title1 "Shear Stress Autocorrelations" &
+                nlen 16 ncount 2 ncorr 30 &
+                file tmp.corr2 
+
+#thermo 1
+
+run		100

@@ -1,0 +1,83 @@
+# Big colloid particles and small LJ particles
+
+units		lj
+atom_style	hybrid sphere dipole
+dimension	2
+
+variable D equal 0.8 # Densidad
+variable T equal 0.5 # Temperature
+variable P equal 0.5 # Pressure
+variable E equal 0.7 # Interaction energy A-B
+variable m equal 2.0 # Dipole moment B
+variable F equal 0.0 # Electric field
+
+log colloidD$D_T$T_E$E_m$m_F$F.log
+
+lattice		sq $D # Densidad
+region		box block 0 64 0 64 -0.5 0.5
+create_box	2 box
+create_atoms	1 box
+
+set		group all type/fraction 2 0.5 23984
+
+set		type 1 mass 1
+set		type 2 mass 1
+set		type 1 dipole/random 98934 1.0 # Dipole A
+set		type 2 dipole/random 98934 $m # Dipole B
+set		type 1 charge 0
+set		type 2 charge 0
+set		type 1 diameter 1.0
+set		type 2 diameter 1.0
+
+group one type 1
+
+velocity	all create $T 87287 loop geom # Temperatura
+
+# multi neighbor and comm for efficiency
+
+neighbor	0.3 multi
+neigh_modify	delay 0
+comm_modify     mode multi
+
+# colloid potential
+
+pair_style	lj/cut/dipole/cut 2.5
+pair_coeff	1 1  1.0 1.0 
+pair_coeff	1 2  $E 1.0 
+pair_coeff	2 2  1.0 1.0 
+
+#fix		1 all nvt/sphere temp $T $T 2.0 update dipole
+fix		1 all npt/sphere temp $T $T 2.0 iso $P $P 2.0 update dipole
+fix		2 all enforce2d
+
+fix elf all efield $F 0.0 0.0
+fix_modify elf energy yes
+
+dump		1 all custom 1000 colloidD$D_T$T_E$E_m$m_F$F.lammpstrj id type x y mux muy
+
+# HISTOGRAM STUFF
+variable M equal 10 # Number of bins in x and w direction
+variable N2 equal $M*$M
+variable dx equal 1.0/$M
+compute BINS all chunk/atom bin/2d x lower ${dx} y lower ${dx} nchunk every units reduced
+compute NUM all property/chunk BINS count
+variable VBIN equal vol/${N2} # Volume of each chunk
+variable PHI vector c_NUM/v_VBIN
+fix fPHI all ave/histo 1000 100 100000 0 1 30 v_PHI mode vector file colloidD$D_T$T_E$E_m$m_F$F.histALL
+
+#HISTOGRAM SPECIES ONE
+#compute BINS1 one chunk/atom bin/2d x lower ${dx} y lower ${dx} nchunk every units reduced
+compute NUM1 one property/chunk BINS count
+variable PHI1 vector c_NUM1/v_VBIN
+fix fPHI1 one ave/histo 1000 100 100000 0 1 30 v_PHI1 mode vector file colloidD$D_T$T_E$E_m$m_F$F.histONE
+
+variable x1 vector c_NUM1/c_NUM
+fix fPHI2 one ave/histo 1000 100 100000 0 1 30 v_x1 mode vector file colloidD$D_T$T_E$E_m$m_F$F.histX
+
+thermo_style	custom step temp epair etotal press vol
+thermo		1000
+
+timestep	0.02
+
+
+run		1000000

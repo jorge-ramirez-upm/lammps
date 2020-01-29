@@ -1,0 +1,46 @@
+# Big colloid particles and small LJ particles
+
+units		lj
+atom_style	sphere
+dimension	2
+
+variable D equal 0.8 # Densidad
+variable C equal 5.0 # Cut-off for g(r)
+
+log LJ_A_Pure_P$P_T$T_rerun.log
+
+lattice		sq $D # Densidad
+region		box block 0 64 0 64 -0.5 0.5
+create_box	1 box
+create_atoms	1 box
+
+set		type 1 mass 1
+
+velocity	all create $T 87287 loop geom # Temperatura
+
+# multi neighbor and comm for efficiency
+
+neighbor	1 multi
+neigh_modify	delay 0
+comm_modify     mode multi
+
+# colloid potential
+
+pair_style	lj/cut $C
+pair_coeff	1 1  1.0 1.0 
+
+fix		1 all npt temp $T $T 1.0 iso $P $P 1.0 
+fix		2 all enforce2d
+
+compute msd all msd
+
+thermo_style	custom step temp epair etotal press vol c_msd[4]
+thermo		1000
+
+timestep	0.01
+compute rdf all rdf 100 1 1
+#fix 3 all ave/time 1000 100 100000 c_rdf[*] LJ_A_Pure_P$P_T$T.gr mode vector
+fix 3 all ave/time 1000 1 1000 c_rdf[*] LJ_A_Pure_P$P_T$T.gr mode vector
+
+rerun 		LJ_A_Pure_P$P_T$T.lammpstrj start 20000000 stop 20000001 dump x y box yes replace yes label id id format native 
+

@@ -1,0 +1,152 @@
+echo none
+units lj
+
+atom_style sphere
+atom_modify	first big
+dimension 2
+
+# Basic variables
+variable a equal 1.0    # Length of MESH mesh (unit length of problem)
+variable m equal 1.0    # Mass of MPCD particles (Unit mass of problem)
+variable kT equal 1.0   # Unit energy of the problem
+variable T equal 1.0    # Temperature
+variable gamma equal 10 # Average number of MPCD particles per mesh (Zottl)
+variable tau0 equal $a*sqrt($m*${kT})     # Unit time of the problem
+variable eta0 equal sqrt($m*${kT}/$a^2) # Unit viscosity 
+# variable rhof equal ${gamma}*$m/$a^3    # Mass density of MPCD fluid 3D
+variable rhof equal ${gamma}*$m/$a^2    # Mass density of MPCD fluid 2D
+# Problem variables
+variable Nx equal 20    # Size of domain in number of meshes
+variable Ny equal 20
+# variable Nz equal 20 # Needed in 3D
+# variable nMPCD equal ${gamma}*${Nx}*${Ny}*${Nz}     # Number of MPCD particles to create 3D
+variable nMPCD equal ${gamma}*${Nx}*${Ny}     # Number of MPCD particles to create 2D
+variable R equal 3.0    # Radius of colloid (Zottl)
+variable D equal 2.0*$R # Diameter of colloid
+# variable V equal 4.0*PI*${R}^3/3.0 # Volume of colloid 3D
+variable V equal PI*${R}^2 # Volume of colloid 2D
+variable M equal $V*${rhof} # Mass of colloid (neutrally buoyant) 3D and 2D
+# variable I equal 2.0/5.0*$M*$R^2 # Moment if inertia of colloid 3D
+variable I equal $m*${R}^2/2.0 # Moment if inertia of colloid 2D
+variable phi equal 0.5  # Area/Volume fraction occupied by big particles
+# variable Nbig equal floor(${Nx}*${Ny}*{Nz}*${phi}/$V) # 3D
+variable Nbig equal floor(${Nx}*${Ny}*${phi}/$V) # 2D
+# variable phireal equal ${Nbig}*$V/${Nx}/${Ny}/${Nz} # 3D
+variable phireal equal ${Nbig}*$V/${Nx}/${Ny} # 2D
+# VIRTUAL PARTICLES
+# variable dS equal 2.0^(1.0/3.0)*$a # Thickness of shell of virtual particles (in 3D)
+variable dS equal sqrt(2.0)*$a # Thickness of shell of virtual particles (in 2D)
+# variable aV equal 4.0*PI/3.0*${dS}*(3*$R^2-3*$R*${dS}+${dS}^2) # Area per colloid for virtual particles 3D
+variable aV equal PI*${dS}*(2*$R-${dS}) # Area per colloid for virtual particles 2D
+variable NV equal round(2*${aV}*${gamma}) # Total number of virtual particles
+
+print "################################################################"
+print "MPCD simulation"
+print "a = $a"
+print "m = $m"
+print "kT = ${kT}"
+print "T = $T"
+print "gamma = ${gamma}"
+print "tau0 = ${tau0}"
+print "eta0 = ${eta0}"
+print "rhof = ${rhof}"
+print "Domain = ${Nx}x${Ny}"
+print "Create ${nMPCD} particles"
+print "R = $R"
+print "M = $M"
+print "I = $I"
+print "phi = ${phi}"
+print "Create ${Nbig} colloids"
+print "phi* = ${phireal}"
+print "dS = ${dS} (Shell for virtual particles)"
+print "aV = ${aV} (Area for virtual particles)"
+print "Create $V Virtual particles"
+print "################################################################"
+
+###############################################################
+## Important that the size in the Z dimension is >= 1 in 2D (due to MPCD code)
+region box block 0 ${Nx} 0 ${Ny} -0.5 0.5
+create_box 2 box
+
+## create pair of particles -- useful for debugging potential
+create_atoms 1 random ${Nbig} 1483985 box
+set		type 1 mass $M
+set		type 1 diameter $D
+
+## assign each particle to group
+group big type 1
+
+# Remove overlaps between big colloids
+pair_style lj/cut 10.0
+pair_modify shift yes
+pair_coeff * * 10.0 $D $D
+minimize 1.0e-4 1.0e-6 10000 100000
+
+###########################################
+# add MPCD particles 
+create_atoms 2 random ${nMPCD} 345666 box
+set		type 2 mass $m # Unit mass of simulation - Zottl
+set		type 2 diameter 0.0
+group		small type 2
+velocity	small create $T 593849 loop geom
+
+############################################
+
+###########################################
+# delete overlaps
+# must set 1-2 cutoff to non-zero value
+pair_style lj/cut $D
+pair_modify shift yes
+pair_coeff 1 1 1.0 1.0 $D
+pair_coeff 1 2 0.0 1.0 $R
+pair_coeff 2 2 0.0 1.0 2.0
+
+delete_atoms	overlap $R small big
+########################################
+
+#write_data test.lammpsdat
+
+fix freeze small setforce 0.0 0.0 0.0
+
+reset_timestep 0
+
+neighbor 0.3 multi
+neigh_modify delay 0 every 1 check yes
+comm_modify	mode multi group big vel yes # Need to communicate vel for MPCD 
+neigh_modify	include big
+
+#################################################
+# Setup interactions again (to control cutoff)
+variable rcut equal 1.12246205*$D
+pair_style lj/cut ${rcut}
+pair_modify shift yes
+pair_coeff 1 1 1.0 $D
+pair_coeff * 2 0.0 1.0 0.0
+
+fix 1 big nve/sphere 
+timestep 0.02 # Andreas Zottl
+
+# fix NAME group_small mpcd freq group_big T hgrid seed radius R inside ? exact ? bound #
+# group_small: particles that act as MPCD fluid
+# freq: how many time steps between collisions
+# group_big: particles that act as big colloids
+# T: temperature
+# hgrid: MPCD mesh size 
+# seed: for random velocity rotation and grid shift
+# radius R: if we want to scale down the colloid radius to avoid MPCD particles inside
+# inside IGNORE/WARNING/ERROR: What to do if a MPCD particle is inside a colloid
+# bounce B: Maximum number of times that a MPCD particle can bounce between colloids
+fix	MPCD small mpcd 100 big $T $a 49894 radius 1.0 inside ignore exact yes bounce 0 angular no
+
+fix 4 all enforce2d
+
+thermo_style	custom step epair &
+		f_MPCD[1] f_MPCD[2] f_MPCD[3] f_MPCD[4] f_MPCD[9]
+thermo_modify norm no
+thermo 10000
+
+#dump 1 all custom 100 dump.lammpstrj id type x y z vx vy vz
+dump 1 all custom 5000 dump.lammpstrj id type x y z
+dump_modify 1 sort id flush yes
+
+run 10000000

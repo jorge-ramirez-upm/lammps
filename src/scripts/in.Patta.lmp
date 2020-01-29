@@ -1,0 +1,35 @@
+# 3d Lennard-Jones melt
+
+units		lj
+atom_style	atomic
+dimension 2
+
+variable D equal 0.4
+variable T equal 0.5
+variable E equal 0.2
+variable R equal 1.4
+
+lattice		sq $D # Densidad
+region		box block 0 64 0 64 -0.5 0.5
+create_box	1 box
+create_atoms	1 box
+mass		1 1.0
+
+velocity	all create $T 87287
+
+#pair_style	lj/cut 2.5
+#pair_coeff	1 1 1.0 1.0 2.5
+pair_style	patta 2.5
+# i j epsilon sigma epsilonSS delta gamma rcut=delta+gamma
+pair_coeff	1 1 1.0 1.0 $E $R 0.1 2.2
+
+neighbor	0.3 bin
+neigh_modify	every 20 delay 0 check no
+
+fix		1 all nvt temp $T $T 2.0
+
+dump		id all atom 1000 Patta.lammpstrj
+dump_modify id sort id
+
+thermo		100
+run		5000000 

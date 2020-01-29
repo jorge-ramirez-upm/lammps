@@ -1,0 +1,75 @@
+units          real   # units of energy kcal/mol, distance angstrom and time if femtosecond
+atom_style     full   # do not change
+boundary       p p p  # periodic boundary conditions in x y z 
+
+read_data      conf.lammpsdat  # contains the positions and masses and other information
+
+group hp1 type 1 2 
+mass 1 20.0 
+mass 2 1.0 
+newton         on               # do not change
+
+variable SIGMA equal 3.405 # Sigma in angstrom
+variable EPSILONPHS_KJ equal 0.996078 # EPSILON OF PHS in KJ
+variable Z0_SIGMA equal 0.12 # WIDTH OF POCILLO IN UNITS OF SIGMA
+variable D_SIGMA equal 0.005 # WIDTH POCILLO INTERPHASE IN UNITS OF SIGMA
+variable EPS_POCILLO_KT equal 8.333333 # DEPTH OF POCILLO IN UNITS OF RT
+
+variable R equal 50 # Repulsive exponent
+variable A equal 49 # Attractive exponent
+variable EPSILONPHS equal ${EPSILONPHS_KJ}/4.184 # IN Kcal
+variable CUTOFFPHS equal ${SIGMA}*($R/$A)^(1/($R-$A)) # Cut-off PHS potential
+variable CUTOFFPOCILLO equal 0.6
+
+variable RGAS equal 8.314
+variable T equal 179.71 
+
+variable Z0 equal ${Z0_SIGMA}*${SIGMA}
+variable EPS_POCILLO equal ${EPS_POCILLO_KT}*${RGAS}*$T/1000.0/4.184
+variable D equal ${D_SIGMA}*${SIGMA}
+
+# TEST EACH POTENTIAL SEPARATELY
+# PHS: CUTOFF Repulsive Attractive (exponents)
+#pair_style	PHS ${CUTOFFPHS} $R $A
+#pair_coeff	1 1 ${EPSILONPHS} $S
+#pair_coeff  1 2 0.0 1.0 0.1
+#pair_coeff  2 2 0.0 1.0 0.1
+#pair_modify shift yes
+# POCILLOS PARAMETER: RCUT_GLOBAL
+#pair_style pocillos ${CUTOFFPOCILLO}
+# COEFF: z0 epsilon dwell RCUT_LOCAL
+#pair_coeff 1 1 0.0 0.0 0.1 0.1
+#pair_coeff 1 2 0.0 0.0 0.1 0.1
+#pair_coeff 2 2 ${Z0} ${EPS_POCILLO} $D ${CUTOFFPOCILLO}
+# BOTH POTENTIALS
+pair_style hybrid/overlay PHS ${CUTOFFPHS} $R $A pocillos ${CUTOFFPOCILLO}
+pair_modify shift yes
+pair_coeff	1 1 PHS ${EPSILONPHS} ${SIGMA}
+pair_coeff  1 2 PHS 0.0 1.0 0.1
+pair_coeff  2 2 PHS 0.0 1.0 0.1
+pair_coeff 1 1 pocillos 0.0 0.0 0.1 0.1
+pair_coeff 1 2 pocillos 0.0 0.0 0.1 0.1
+pair_coeff 2 2 pocillos ${Z0} ${EPS_POCILLO} $D ${CUTOFFPOCILLO}
+
+neighbor       2.0 multi # neighbor list skin width
+neigh_modify   every 1 delay 2 check yes # frequency to update neighor list exclude type 1 2 exclude type 2 1
+
+timestep       0.5   # time step for the integration of the equations of motion, in femtoseconds 
+#thermo_style   custom step temp pe etotal press vol enthalpy c_1 density   # energy and thermo properties printed to output
+thermo_style   custom step temp pe etotal press vol enthalpy density   # energy and thermo properties printed to output
+thermo_modify  flush yes  # flush the buffer and write the output in real time
+thermo         1000     # how often (in steps) will write the properties of thermo_style to the output
+
+reset_timestep  0   # move the zero of time in the output to the value indicated there (if not needed, comment it)
+velocity         all create 1.71 50494 rot yes mom yes dist gaussian # assign initial velocities to the particles
+restart         2000000  restart   # write a binary restart file every XXX steps  
+
+fix 		1 hp1 rigid/npt molecule  temp 179.71 179.71 20.0 iso 40.0 40.0 100.0
+
+dump            1 all custom 2000000      water.lammpstrj id type  xu yu zu # dump configuration into a trajectory file
+#dump		id all atom 100 pocillos_PHS.lammpstrj
+run             80000000                        # runs this number of steps of simulation
+#unfix           1        # undo the fix 1, need to do this if it will be followed by another run
+#undump          1        # undo the dump of the trajectory
+
+write_restart   restart.end  # write a binary restart file at the end of the simulation
