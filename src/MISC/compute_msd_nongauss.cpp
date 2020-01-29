@@ -100,6 +100,12 @@ void ComputeMSDNonGauss::compute_vector()
   if (nmsd) {
     vector[0] /= nmsd;
     vector[1] /= nmsd;
-    vector[2] = (3*vector[1])/(5*vector[0]*vector[0]) - 1;
+    if (domain->dimension == 3)
+        vector[2] = (3 * vector[1]) / (5 * vector[0] * vector[0]) - 1;
+    else if (domain->dimension == 2)
+        vector[2] = (2 * vector[1]) / (4 * vector[0] * vector[0]) - 1;
+    else if (domain->dimension == 1)
+        vector[2] = (1 * vector[1]) / (3 * vector[0] * vector[0]) - 1;
+
   }
 }
