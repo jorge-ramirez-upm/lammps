@@ -12,7 +12,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Irene Durán, Jorge Ramírez (jorge.ramirez@upm.es)
+   Contributing author: Irene Durï¿½n, Jorge Ramï¿½rez (jorge.ramirez@upm.es)
 ------------------------------------------------------------------------- */
 
 #include <cmath>

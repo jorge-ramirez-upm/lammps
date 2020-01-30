@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/lmp_serial_debug",
-            "args": ["-i", "../examples/melt/in.melt"],
+            "args": ["-i", "scripts/in.GribovaNPT.lmp"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
