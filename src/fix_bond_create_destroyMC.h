@@ -49,7 +49,7 @@ class FixBondCreateDestroyMC : public Fix {
   int me;
   int iatomtype,jatomtype;
   int btype,seed;
-  double cutoff, cutsq, fraction, Ea, Ee, T, kFENE, RFENE, sigmaLJ, epsilonLJ, kA; //JAVI
+  double cutoff, cutsq, fraction, Ea, Ee, T, kFENE, RFENE, sigmaLJ, epsilonLJ, kA, maxG; //JAVI
   int imaxbond,jmaxbond;
   double cutminsq,pon,poff;
   int overflow;

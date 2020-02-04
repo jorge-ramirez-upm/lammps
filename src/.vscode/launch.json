@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/lmp_serial_debug",
-            "args": ["-i", "scripts/in.GribovaNPT.lmp"],
+            "args": ["-i", "scripts/in.ManyparticlesBondCreateDestroyMC.lmp"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

@@ -82,6 +82,7 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg, char **arg
   int seed = 12345;
   cutminsq = 0.0;
   diffmol = 0;
+  maxG = 2.0;
 
   int iarg = 8;
   while (iarg < narg) {
@@ -118,7 +119,7 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg, char **arg
             error->all(FLERR, "Illegal fix bond/create/MC command");
         iarg += 3;
     }
-    // OTRO GRUPO PARA LEER LOS PARÁMETROS DE LJ
+    // OTRO GRUPO PARA LEER LOS PARï¿½METROS DE LJ
     else if (strcmp(arg[iarg], "LJ") == 0) {
         if (iarg + 3 > narg) error->all(FLERR, "Illegal fix bond/create/MC command");
         sigmaLJ = force->numeric(FLERR, arg[iarg + 1]);
@@ -128,17 +129,26 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg, char **arg
         iarg += 3;
     }
     else if (strcmp(arg[iarg],"Rmin") == 0) {
-	if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/create/destroy/MC command");
-        double Rmin = force->numeric(FLERR,arg[iarg+1]);
-        if (Rmin < 0.0)
-          error->all(FLERR,"Illegal fix bond/create/destroy/MC command");
-        cutminsq = Rmin*Rmin;
-        iarg += 2;
-    } 
+      if (iarg + 2 > narg)
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
+      double Rmin = force->numeric(FLERR, arg[iarg + 1]);
+      if (Rmin < 0.0)
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
+      cutminsq = Rmin * Rmin;
+      iarg += 2;
+    }
+    else if (strcmp(arg[iarg],"maxG") == 0) {
+      if (iarg + 2 > narg)
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
+      maxG = force->numeric(FLERR, arg[iarg + 1]);
+      if (maxG < 0.0)
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
+      iarg += 2;
+    }
       else if (strcmp(arg[iarg],"diffmol") == 0) {
         if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/create/destroy/MC command");
         diffmol = force->inumeric(FLERR,arg[iarg+1]);
-	iarg += 2;
+	      iarg += 2;
     } else error->all(FLERR,"Illegal fix bond/create/destroy/MC command");
   }
 
@@ -336,11 +346,11 @@ double FixBondCreateDestroyMC::UFENE(double rsq) {
 }
 
 double FixBondCreateDestroyMC::UBondedSticker(double rsq) {
-	// MUY CHAPUZA, HAY QUE METER 0.965 A MANO
-	return UFENE(rsq) + ULJ(rsq) - UFENE(0.9609) - ULJ(0.9609) - Ee;
-	//E- aquí ponia epsilon pero lo he cambiado por Ee que es como hemos llamado a la energia de enlace
+	// MUY CHAPUZA, HAY QUE METER 0.9678598275 A MANO, cuyo CUADRADO ES 0.9367526465
+	return UFENE(rsq) + ULJ(rsq) - UFENE(0.9367526465) - ULJ(0.9367526465) - Ee;
+	//E- aquï¿½ ponia epsilon pero lo he cambiado por Ee que es como hemos llamado a la energia de enlace
 }
-//UBondedSticker es la energía de enlace para MC
+//UBondedSticker es la energï¿½a de enlace para MC
 
 int FixBondCreateDestroyMC::PoissonSmall(double lambda) //JAVI
 {
@@ -351,7 +361,7 @@ int FixBondCreateDestroyMC::PoissonSmall(double lambda) //JAVI
 	do
 	{
 		k++;
-		p *= random->uniform(); // CAMBIAR POR EL GENERADOR DE Nºs ALEATORIOS DE LAMMPS
+		p *= random->uniform(); // CAMBIAR POR EL GENERADOR DE Nï¿½s ALEATORIOS DE LAMMPS
 	} while (p > L);
 	return k - 1;
 }
@@ -758,8 +768,10 @@ void FixBondCreateDestroyMC::post_integrate()
 	//JAVI: New operations
 	Gi[npairs] = i1; //JAVI
 	Gj[npairs] = atom->map(tag[i2]);
-	if (npairs == 0) Gaccumaij[npairs] = kA * exp(UBondedSticker(rsq) / T);
-	else Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA * exp(UBondedSticker(rsq) / T);
+  double fact=exp(UBondedSticker(rsq) / T);
+  if (fact>maxG) fact=maxG;
+	if (npairs == 0) Gaccumaij[npairs] = kA * fact;
+	else Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA * fact;
 	npairs++;
 	//JAVI: End of new operations
   }
