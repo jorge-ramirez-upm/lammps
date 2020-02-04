@@ -5,9 +5,9 @@ units           lj
 atom_style      bond
 special_bonds   fene
 
-variable T equal 1.0
-variable L equal 1 # TAMAÑO DE LA CAJA
-variable rho equal 0.6
+variable T equal 1
+variable L equal 10 # TAMAÑO DE LA CAJA
+variable rho equal 0.2
 boundary        p p p
 
 lattice         fcc ${rho}
@@ -41,8 +41,9 @@ fix 3 all bond/create 100 1 1 1.0 1 prob 0.135335283 438493 iparam 1 1 jparam 1 
 #fix 3 all bond/create/MC 100 1 1 1.0 1 energies 2.0 8.0 $T 438493 FENE 30.0 1.5 LJ 1.0 1.0 iparam 1 1 jparam 1 1 
 #fix 4 all bond/break 100 1 1.0 prob 0.01 43874837 
 #fix 4 all bond/break/MC 100 1 1.0 energies 2.0 8.0 $T 438493 FENE 30.0 1.5 LJ 1.0 1.0
+fix BondCreate all bond/create/destroy 100 2 2 1.0 2 prob ${pon} ${poff} 44394398 imax 1 jmax 1 Rmin 0.0
 
-thermo 1
+thermo 100
 thermo_style custom step temp ebond epair etotal press bonds 
 thermo_modify norm no flush yes
 dump            coord all custom 100 ManyParticles.lammpstrj id x y z

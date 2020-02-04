@@ -441,7 +441,7 @@ void FixBondCreateDestroy::post_integrate()
     // apply probability constraint using RN for atom with smallest ID
 
     if (pon < 1.0) {
-      printf("CREATE: %d %d ", tag[i], tag[j]);
+      //printf("CREATE: %d %d ", tag[i], tag[j]);
       if (tag[i] < tag[j]) {
         if (probability[i] >= pon) continue;
       } else {
