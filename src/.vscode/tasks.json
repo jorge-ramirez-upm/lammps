@@ -5,9 +5,20 @@
     "tasks": [
         {
             "type": "shell",
-            "label": "g++ build project",
+            "label": "g++ build project serial debug",
             "command": "/usr/bin/make",
             "args": ["serial_debug"],
+            "problemMatcher": ["$gcc"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "type": "shell",
+            "label": "mpi debug compile project",
+            "command": "/usr/bin/make",
+            "args": ["mpi_debug"],
             "problemMatcher": ["$gcc"],
             "group": {
                 "kind": "build",
