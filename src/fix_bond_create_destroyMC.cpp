@@ -776,6 +776,9 @@ void FixBondCreateDestroyMC::post_integrate()
 	//JAVI: End of new operations
   }
 
+  // reverse comm of partner info
+  if (force->newton_bond) comm->reverse_comm_fix(this);
+
   //JAVI: Start loop for "final" partners to break
   nbreak = GetPoisson(dtGillespie * Gaccumaij[npairs - 1]); //JAVI
   if (nbreak > npairs) nbreak = npairs;
@@ -796,9 +799,6 @@ void FixBondCreateDestroyMC::post_integrate()
 	  }
   }
   //JAVI: End loop for "final" partners to break
-  
-  // reverse comm of partner info
-  if (force->newton_bond) comm->reverse_comm_fix(this);
 
   // each atom now knows its winning partner
   // for prob check, generate random value for each atom with a bond partner
