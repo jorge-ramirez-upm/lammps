@@ -520,8 +520,8 @@ void FixBondCreateDestroyMC::post_integrate() {
       tagint jmol = molecule[j];
 
       // Attempt to eliminate atoms that should be bonded in another CPU
-      if (tag[j] < tag[i] && j!=atom->map(tag[j]))
-         continue;
+      //if (tag[j] < tag[i] && j!=atom->map(tag[j]))
+      //   continue;
 
       possible = 0;
       if (imol == jmol && diffmol)
@@ -553,11 +553,14 @@ void FixBondCreateDestroyMC::post_integrate() {
 
       // JAVI: We substitute the distance criterium for the Gillespie criterium
       Gi[npairs] = i;
-      Gj[npairs] = atom->map(tag[j]);
+      //Gj[npairs] = atom->map(tag[j]);
+      Gj[npairs] = j;
       if (npairs == 0)
         Gaccumaij[npairs] = kA;
       else
         Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA;
+
+      // AÑADIR distpair[npairs] = rsq??????
 
       npairs++;
       // JAVI: End of new criterium
@@ -578,13 +581,18 @@ void FixBondCreateDestroyMC::post_integrate() {
         if (Gaccumaij[j] > aux)
           break;
       }
+      // UTILIZAR OTRO ARRAY (tmppartner) QUE VAYA DESDE 0 HASTA NATOMS-1 QUE SE INICIALICE A 0 Y SE VAYA RELLENANDO A MEDIDA QUE SE CREAN ENLACES
+      // EN LUGAR DE !partner[Gi[j]], miramos !tmppartner[tag[Gi[j]]-1], y TAMBIEN !partner[Gj[j]], miramos !tmppartner[tag[Gj[j]]-1]
       if (!partner[Gi[j]] &&
           !partner[Gj[j]]) { // JAVI: We use Partner as if it was Finalpartner
         partner[Gi[j]] =
             tag[Gj[j]]; // JAVI: Gi is the id of the atom (local or ghost)
         partner[Gj[j]] = tag[Gi[j]];
+        // ASIGNARLE distpair CORRESPONDIENTE A CADA partner?
         done = 1;
 
+        /////////////////////////////////
+        // CHECK THIS PART OF THE CODE!!!
         maxbonds = i + 1;
         for (k = 0; k < npairs; k++) {
           if (!partner[Gi[k]] && !partner[Gj[k]]) {
@@ -594,6 +602,7 @@ void FixBondCreateDestroyMC::post_integrate() {
         if (ncreate > maxbonds) {
           ncreate = maxbonds;
         }
+        /////////////////////////////////
       }
     }
   }
