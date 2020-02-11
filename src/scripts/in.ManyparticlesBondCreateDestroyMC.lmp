@@ -6,9 +6,9 @@ atom_style      bond
 special_bonds   fene
 
 variable T equal 1
-variable L equal 4 # TAMA�O DE LA CAJA
+variable L equal 2 # TAMA�O DE LA CAJA
 variable FOLDER string "output"
-variable rho equal 0.8
+variable rho equal 0.85
 boundary        p p p
 
 lattice         sc ${rho}
@@ -52,5 +52,5 @@ dump_modify coord sort id
 #restart 600000 $F.restart1.dat $F.restart2.dat
 reset_timestep 0 
 timestep        0.01
-run 10000
+run 1000000
 write_data ${FOLDER}/ManyparticlesBondCreateDestroyMCrho${rho}L$L.lammpsdat
