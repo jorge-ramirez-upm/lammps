@@ -63,8 +63,9 @@ class FixBondCreateDestroyMC : public Fix {
   double *distsq,*probability;
 
   //JAVI: Gillespie arrays
-  tagint* Gi, * Gj;  // Partners of a bond that can be broken
+  tagint* Gi, * Gj, *Gtagi, *Gtagj;  // Partners of a bond that can be broken
   double* Gaccumaij;      // Accumulated propensity
+  double* pairDist;      // Distance between pairs
   double dtGillespie;
   //
 
@@ -78,7 +79,7 @@ class FixBondCreateDestroyMC : public Fix {
   class RanMars *random;
   class NeighList *list;
 
-  int countflag,commflag;
+  int countflag,commflag, stageflag; // stageflag=0 if creating, 1 if breaking
   int diffmol; // Only allow bonds between different molecules
 
   void check_ghosts();

@@ -71,7 +71,7 @@ class FixBondCreateDestroy : public Fix {
   class RanMars *random;
   class NeighList *list;
 
-  int countflag,commflag;
+  int countflag,commflag, stageflag; // stageflag=0 if creating, 1 if breaking
   int diffmol; // Only allow bonds between different molecules
 
   void check_ghosts();

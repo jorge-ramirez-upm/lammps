@@ -107,7 +107,7 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg,
       iarg += 2;
     } else if (strcmp(arg[iarg], "energies") == 0) {
       if (iarg + 5 > narg)
-        error->all(FLERR, "Illegal fix bond/create/MC command");
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       Ea = force->numeric(FLERR, arg[iarg + 1]);
       Ee = force->numeric(FLERR,
                           arg[iarg + 2]); // E- lo he cambiado a Ee para saber
@@ -115,30 +115,30 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg,
       T = force->numeric(FLERR, arg[iarg + 3]);
       seed = force->inumeric(FLERR, arg[iarg + 4]);
       if (Ea < 0.0 || Ee < 0.0 || T < 0.0)
-        error->all(FLERR, "Illegal fix bond/create/MC command");
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       if (seed <= 0)
-        error->all(FLERR, "Illegal fix bond/create/MC command");
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       iarg += 5;
       kA = exp(-Ea / T); // el antiguo pon, ahora no depende de nevery
     }
     // PARAMETROS DEL POTENCIAL FENE
     else if (strcmp(arg[iarg], "FENE") == 0) {
       if (iarg + 3 > narg)
-        error->all(FLERR, "Illegal fix bond/create/MC command");
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       kFENE = force->numeric(FLERR, arg[iarg + 1]);
       RFENE = force->numeric(FLERR, arg[iarg + 2]);
       if (kFENE < 0.0 || RFENE < 0.0)
-        error->all(FLERR, "Illegal fix bond/create/MC command");
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       iarg += 3;
     }
     // OTRO GRUPO PARA LEER LOS PAR�METROS DE LJ
     else if (strcmp(arg[iarg], "LJ") == 0) {
       if (iarg + 3 > narg)
-        error->all(FLERR, "Illegal fix bond/create/MC command");
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       sigmaLJ = force->numeric(FLERR, arg[iarg + 1]);
       epsilonLJ = force->numeric(FLERR, arg[iarg + 2]);
       if (sigmaLJ < 0.0 || epsilonLJ < 0.0)
-        error->all(FLERR, "Illegal fix bond/create/MC command");
+        error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       iarg += 3;
     } else if (strcmp(arg[iarg], "Rmin") == 0) {
       if (iarg + 2 > narg)
@@ -208,6 +208,8 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg,
   // JAVI: (probability = NULL; ?)
   Gi = NULL;
   Gj = NULL;
+  Gtagi = NULL;
+  Gtagj = NULL;
   Gaccumaij = NULL;
   //
 
@@ -253,7 +255,10 @@ FixBondCreateDestroyMC::~FixBondCreateDestroyMC() {
   // JAVI
   memory->destroy(Gi);
   memory->destroy(Gj);
+  memory->destroy(Gtagi);
+  memory->destroy(Gtagj);
   memory->destroy(Gaccumaij);
+  memory->destroy(pairDist);
   //
   delete[] copy;
 }
@@ -425,6 +430,9 @@ void FixBondCreateDestroyMC::post_integrate() {
   if (update->ntimestep % nevery)
     return;
 
+  // WE START CREATING BONDS
+  stageflag = 0;
+
   // check that all procs have needed ghost atoms within ghost cutoff
   // only if neighbor list has changed since last check
   // needs to be <= test b/c neighbor list could have been re-built in
@@ -456,7 +464,10 @@ void FixBondCreateDestroyMC::post_integrate() {
     // JAVI:
     memory->destroy(Gi);
     memory->destroy(Gj);
+    memory->destroy(Gtagi);
+    memory->destroy(Gtagj);
     memory->destroy(Gaccumaij);
+	memory->destroy(pairDist);
     //
     nmax = atom->nmax;
     memory->create(partner, nmax, "bond/create/destroy/MC:partner");
@@ -464,9 +475,12 @@ void FixBondCreateDestroyMC::post_integrate() {
     memory->create(distsq, nmax, "bond/create/destroy/MC:distsq");
     probability = distsq;
     // JAVI
-    memory->create(Gi, nmax, "bond/create/MC:Gi");
-    memory->create(Gj, nmax, "bond/create/MC:Gj");
-    memory->create(Gaccumaij, nmax, "bond/create/MC:Gaccumaij");
+    memory->create(Gi, nmax, "bond/create/destroy/MC:Gi");
+    memory->create(Gj, nmax, "bond/create/destroy/MC:Gj");
+    memory->create(Gtagi, nmax, "bond/create/destroy/MC:Gtagi");
+    memory->create(Gtagj, nmax, "bond/create/destroy/MC:Gtagj");
+    memory->create(Gaccumaij, nmax, "bond/create/destroy/MC:Gaccumaij");
+	memory->create(pairDist, nmax, "bond/create/destroy/MC:pairDist");
     //
   }
 
@@ -553,19 +567,24 @@ void FixBondCreateDestroyMC::post_integrate() {
 
       // JAVI: We substitute the distance criterium for the Gillespie criterium
       Gi[npairs] = i;
+      Gtagi[npairs] = tag[i];
       //Gj[npairs] = atom->map(tag[j]);
       Gj[npairs] = j;
-      if (npairs == 0)
-        Gaccumaij[npairs] = kA;
-      else
-        Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA;
+      Gtagj[npairs] = tag[j];
+	  //if (npairs == 0)
+		  Gaccumaij[npairs] = kA;
+	  //else
+		//  Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA;
 
-      // AÑADIR distpair[npairs] = rsq??????
+		  pairDist[npairs] = rsq;
 
       npairs++;
       // JAVI: End of new criterium
     }
   }
+  
+  // LIMPIEZA DE LA LISTA DE PARES... IF Gtagj<Gtagi and Gj>nlocal then REMOVE
+  // Reconstruir Gaccumaij y npairs
 
   ncreate =
       GetPoisson(dtGillespie *
@@ -587,8 +606,12 @@ void FixBondCreateDestroyMC::post_integrate() {
           !partner[Gj[j]]) { // JAVI: We use Partner as if it was Finalpartner
         partner[Gi[j]] =
             tag[Gj[j]]; // JAVI: Gi is the id of the atom (local or ghost)
+		distsq[Gi[j]] = pairDist[j];
+		probability[Gi[j]] = 1.0;
         partner[Gj[j]] = tag[Gi[j]];
-        // ASIGNARLE distpair CORRESPONDIENTE A CADA partner?
+		distsq[Gj[j]] = pairDist[j];
+		probability[Gj[j]] = 1.0;
+
         done = 1;
 
         /////////////////////////////////
@@ -637,8 +660,7 @@ void FixBondCreateDestroyMC::post_integrate() {
   int **bond_type = atom->bond_type;
   int newton_bond = force->newton_bond;
 
-  ncreate = 0; // JAVI: ncreate will be recalculated. Do we want that? Does it
-               // really affect?
+  ncreate = 0;
   for (i = 0; i < nlocal; i++) {
     if (partner[i] == 0)
       continue;
@@ -770,6 +792,7 @@ void FixBondCreateDestroyMC::post_integrate() {
   //////////////////////////////////////////////////////////////////////
   // BOND BREAK SECTION
   // JORGE: Simply copy the contents of post_integrate from fix_bond_break
+  stageflag = 1;
   for (i = 0; i < nall; i++) {
     partner[i] = 0;
     finalpartner[i] = 0;
@@ -821,6 +844,9 @@ void FixBondCreateDestroyMC::post_integrate() {
       Gaccumaij[npairs] = kA * fact;
     else
       Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA * fact;
+
+	pairDist[npairs] = rsq;
+
     npairs++;
     // JAVI: End of new operations
   }
@@ -841,7 +867,13 @@ void FixBondCreateDestroyMC::post_integrate() {
 
       if (!partner[Gi[j]] && !partner[Gj[j]]) {
         partner[Gi[j]] = tag[Gj[j]];
+		distsq[Gi[j]] = pairDist[j];
+		probability[Gi[j]] = 1.0;
+
         partner[Gj[j]] = tag[Gi[j]];
+		distsq[Gj[j]] = pairDist[j];
+		probability[Gj[j]] = 1.0;
+
         done = 1;
       }
     }
@@ -1280,38 +1312,74 @@ int FixBondCreateDestroyMC::pack_forward_comm(int n, int *list, double *buf,
                                               int pbc_flag, int *pbc) {
   int i, j, k, m, ns;
 
-  m = 0;
+  if (stageflag==0) {
 
-  if (commflag == 1) {
-    for (i = 0; i < n; i++) {
+    m = 0;
+
+    if (commflag == 1)
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        buf[m++] = ubuf(bondcount[j]).d;
+      }
+      return m;
+    }
+
+    if (commflag == 2)
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        buf[m++] = ubuf(partner[j]).d;
+        buf[m++] = probability[j];
+      }
+      return m;
+    }
+
+    int **nspecial = atom->nspecial;
+    tagint **special = atom->special;
+
+    m = 0;
+    for (i = 0; i < n; i++)
+    {
       j = list[i];
-      buf[m++] = ubuf(bondcount[j]).d;
+      buf[m++] = ubuf(finalpartner[j]).d;
+      ns = nspecial[j][0];
+      buf[m++] = ubuf(ns).d;
+      for (k = 0; k < ns; k++)
+        buf[m++] = ubuf(special[j][k]).d;
     }
     return m;
   }
+  else {
+    if (commflag == 1)
+    {
+      m = 0;
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        buf[m++] = ubuf(partner[j]).d;
+        buf[m++] = probability[j];
+      }
+      return m;
+    }
 
-  if (commflag == 2) {
-    for (i = 0; i < n; i++) {
+    int **nspecial = atom->nspecial;
+    tagint **special = atom->special;
+
+    m = 0;
+    for (i = 0; i < n; i++)
+    {
       j = list[i];
-      buf[m++] = ubuf(partner[j]).d;
-      buf[m++] = probability[j];
+      buf[m++] = ubuf(finalpartner[j]).d;
+      ns = nspecial[j][0];
+      buf[m++] = ubuf(ns).d;
+      for (k = 0; k < ns; k++)
+        buf[m++] = ubuf(special[j][k]).d;
     }
     return m;
   }
-
-  int **nspecial = atom->nspecial;
-  tagint **special = atom->special;
-
-  m = 0;
-  for (i = 0; i < n; i++) {
-    j = list[i];
-    buf[m++] = ubuf(finalpartner[j]).d;
-    ns = nspecial[j][0];
-    buf[m++] = ubuf(ns).d;
-    for (k = 0; k < ns; k++)
-      buf[m++] = ubuf(special[j][k]).d;
-  }
-  return m;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1320,29 +1388,70 @@ void FixBondCreateDestroyMC::unpack_forward_comm(int n, int first,
                                                  double *buf) {
   int i, j, m, ns, last;
 
-  m = 0;
-  last = first + n;
-
-  if (commflag == 1) {
-    for (i = first; i < last; i++)
-      bondcount[i] = (int)ubuf(buf[m++]).i;
-  } else if (commflag == 2) {
-    for (i = first; i < last; i++) {
-      partner[i] = (tagint)ubuf(buf[m++]).i;
-      probability[i] = buf[m++];
-    }
-  } else {
-    int **nspecial = atom->nspecial;
-    tagint **special = atom->special;
+  if (stageflag == 0)
+  {
 
     m = 0;
     last = first + n;
-    for (i = first; i < last; i++) {
-      finalpartner[i] = (tagint)ubuf(buf[m++]).i;
-      ns = (int)ubuf(buf[m++]).i;
-      nspecial[i][0] = ns;
-      for (j = 0; j < ns; j++)
-        special[i][j] = (tagint)ubuf(buf[m++]).i;
+
+    if (commflag == 1)
+    {
+      for (i = first; i < last; i++)
+        bondcount[i] = (int)ubuf(buf[m++]).i;
+    }
+    else if (commflag == 2)
+    {
+      for (i = first; i < last; i++)
+      {
+        partner[i] = (tagint)ubuf(buf[m++]).i;
+        probability[i] = buf[m++];
+      }
+    }
+    else
+    {
+      int **nspecial = atom->nspecial;
+      tagint **special = atom->special;
+
+      m = 0;
+      last = first + n;
+      for (i = first; i < last; i++)
+      {
+        finalpartner[i] = (tagint)ubuf(buf[m++]).i;
+        ns = (int)ubuf(buf[m++]).i;
+        nspecial[i][0] = ns;
+        for (j = 0; j < ns; j++)
+          special[i][j] = (tagint)ubuf(buf[m++]).i;
+      }
+    }
+  }
+  else
+  {
+    if (commflag == 1)
+    {
+      m = 0;
+      last = first + n;
+      for (i = first; i < last; i++)
+      {
+        partner[i] = (tagint)ubuf(buf[m++]).i;
+        probability[i] = buf[m++];
+      }
+    }
+    else
+    {
+
+      int **nspecial = atom->nspecial;
+      tagint **special = atom->special;
+
+      m = 0;
+      last = first + n;
+      for (i = first; i < last; i++)
+      {
+        finalpartner[i] = (tagint)ubuf(buf[m++]).i;
+        ns = (int)ubuf(buf[m++]).i;
+        nspecial[i][0] = ns;
+        for (j = 0; j < ns; j++)
+          special[i][j] = (tagint)ubuf(buf[m++]).i;
+      }
     }
   }
 }
@@ -1352,20 +1461,37 @@ void FixBondCreateDestroyMC::unpack_forward_comm(int n, int first,
 int FixBondCreateDestroyMC::pack_reverse_comm(int n, int first, double *buf) {
   int i, m, last;
 
-  m = 0;
-  last = first + n;
+  if (stageflag == 0)
+  {
 
-  if (commflag == 1) {
+    m = 0;
+    last = first + n;
+
+    if (commflag == 1)
+    {
+      for (i = first; i < last; i++)
+        buf[m++] = ubuf(bondcount[i]).d;
+      return m;
+    }
+
     for (i = first; i < last; i++)
-      buf[m++] = ubuf(bondcount[i]).d;
+    {
+      buf[m++] = ubuf(partner[i]).d;
+      buf[m++] = distsq[i];
+    }
     return m;
   }
-
-  for (i = first; i < last; i++) {
-    buf[m++] = ubuf(partner[i]).d;
-    buf[m++] = distsq[i];
+  else
+  {
+    m = 0;
+    last = first + n;
+    for (i = first; i < last; i++)
+    {
+      buf[m++] = ubuf(partner[i]).d;
+      buf[m++] = distsq[i];
+    }
+    return m;
   }
-  return m;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1374,20 +1500,45 @@ void FixBondCreateDestroyMC::unpack_reverse_comm(int n, int *list,
                                                  double *buf) {
   int i, j, m;
 
-  m = 0;
+  if (stageflag == 0)
+  {
+    m = 0;
 
-  if (commflag == 1) {
-    for (i = 0; i < n; i++) {
-      j = list[i];
-      bondcount[j] += (int)ubuf(buf[m++]).i;
+    if (commflag == 1)
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        bondcount[j] += (int)ubuf(buf[m++]).i;
+      }
     }
-  } else {
-    for (i = 0; i < n; i++) {
+    else
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        if (buf[m + 1] < distsq[j])
+        {
+          partner[j] = (tagint)ubuf(buf[m++]).i;
+          distsq[j] = buf[m++];
+        }
+        else
+          m += 2;
+      }
+    }
+  }
+  else
+  {
+    m = 0;
+    for (i = 0; i < n; i++)
+    {
       j = list[i];
-      if (buf[m + 1] < distsq[j]) {
+      if (buf[m + 1] > distsq[j])
+      {
         partner[j] = (tagint)ubuf(buf[m++]).i;
         distsq[j] = buf[m++];
-      } else
+      }
+      else
         m += 2;
     }
   }
@@ -1450,6 +1601,9 @@ double FixBondCreateDestroyMC::memory_usage() {
   double bytes = nmax * sizeof(int);
   bytes = 2 * nmax * sizeof(tagint);
   bytes += nmax * sizeof(double);
+
+  /* JR, JAVI: ESTIMAR LA MEMORIA UTILIZADA POR NUESTRO FIX */
+
   return bytes;
 }
 
@@ -1461,32 +1615,6 @@ void FixBondCreateDestroyMC::print_bb() {
            atom->num_bond[i]);
     for (int j = 0; j < atom->num_bond[i]; j++) {
       printf(" " TAGINT_FORMAT, atom->bond_atom[i][j]);
-    }
-    printf("\n");
-    printf("TAG " TAGINT_FORMAT ": %d nangles: ", atom->tag[i],
-           atom->num_angle[i]);
-    for (int j = 0; j < atom->num_angle[i]; j++) {
-      printf(" " TAGINT_FORMAT " " TAGINT_FORMAT " " TAGINT_FORMAT ",",
-             atom->angle_atom1[i][j], atom->angle_atom2[i][j],
-             atom->angle_atom3[i][j]);
-    }
-    printf("\n");
-    printf("TAG " TAGINT_FORMAT ": %d ndihedrals: ", atom->tag[i],
-           atom->num_dihedral[i]);
-    for (int j = 0; j < atom->num_dihedral[i]; j++) {
-      printf(" " TAGINT_FORMAT " " TAGINT_FORMAT " " TAGINT_FORMAT
-             " " TAGINT_FORMAT ",",
-             atom->dihedral_atom1[i][j], atom->dihedral_atom2[i][j],
-             atom->dihedral_atom3[i][j], atom->dihedral_atom4[i][j]);
-    }
-    printf("\n");
-    printf("TAG " TAGINT_FORMAT ": %d nimpropers: ", atom->tag[i],
-           atom->num_improper[i]);
-    for (int j = 0; j < atom->num_improper[i]; j++) {
-      printf(" " TAGINT_FORMAT " " TAGINT_FORMAT " " TAGINT_FORMAT
-             " " TAGINT_FORMAT ",",
-             atom->improper_atom1[i][j], atom->improper_atom2[i][j],
-             atom->improper_atom3[i][j], atom->improper_atom4[i][j]);
     }
     printf("\n");
     printf("TAG " TAGINT_FORMAT ": %d %d %d nspecial: ", atom->tag[i],

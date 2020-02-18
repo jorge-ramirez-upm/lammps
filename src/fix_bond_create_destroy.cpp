@@ -297,6 +297,9 @@ void FixBondCreateDestroy::post_integrate() {
   if (update->ntimestep % nevery)
     return;
 
+  // WE START CREATING BONDS
+  stageflag = 0;
+
   // check that all procs have needed ghost atoms within ghost cutoff
   // only if neighbor list has changed since last check
   // needs to be <= test b/c neighbor list could have been re-built in
@@ -582,6 +585,7 @@ void FixBondCreateDestroy::post_integrate() {
   //////////////////////////////////////////////////////////////////////
   // BOND BREAK SECTION
   // JORGE: Simply copy the contents of post_integrate from fix_bond_break
+  stageflag = 1;
   for (i = 0; i < nall; i++) {
     partner[i] = 0;
     finalpartner[i] = 0;
@@ -1044,38 +1048,74 @@ int FixBondCreateDestroy::pack_forward_comm(int n, int *list, double *buf,
                                             int pbc_flag, int *pbc) {
   int i, j, k, m, ns;
 
-  m = 0;
+  if (stageflag==0) {
 
-  if (commflag == 1) {
-    for (i = 0; i < n; i++) {
+    m = 0;
+
+    if (commflag == 1)
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        buf[m++] = ubuf(bondcount[j]).d;
+      }
+      return m;
+    }
+
+    if (commflag == 2)
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        buf[m++] = ubuf(partner[j]).d;
+        buf[m++] = probability[j];
+      }
+      return m;
+    }
+
+    int **nspecial = atom->nspecial;
+    tagint **special = atom->special;
+
+    m = 0;
+    for (i = 0; i < n; i++)
+    {
       j = list[i];
-      buf[m++] = ubuf(bondcount[j]).d;
+      buf[m++] = ubuf(finalpartner[j]).d;
+      ns = nspecial[j][0];
+      buf[m++] = ubuf(ns).d;
+      for (k = 0; k < ns; k++)
+        buf[m++] = ubuf(special[j][k]).d;
     }
     return m;
   }
+  else {
+    if (commflag == 1)
+    {
+      m = 0;
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        buf[m++] = ubuf(partner[j]).d;
+        buf[m++] = probability[j];
+      }
+      return m;
+    }
 
-  if (commflag == 2) {
-    for (i = 0; i < n; i++) {
+    int **nspecial = atom->nspecial;
+    tagint **special = atom->special;
+
+    m = 0;
+    for (i = 0; i < n; i++)
+    {
       j = list[i];
-      buf[m++] = ubuf(partner[j]).d;
-      buf[m++] = probability[j];
+      buf[m++] = ubuf(finalpartner[j]).d;
+      ns = nspecial[j][0];
+      buf[m++] = ubuf(ns).d;
+      for (k = 0; k < ns; k++)
+        buf[m++] = ubuf(special[j][k]).d;
     }
     return m;
   }
-
-  int **nspecial = atom->nspecial;
-  tagint **special = atom->special;
-
-  m = 0;
-  for (i = 0; i < n; i++) {
-    j = list[i];
-    buf[m++] = ubuf(finalpartner[j]).d;
-    ns = nspecial[j][0];
-    buf[m++] = ubuf(ns).d;
-    for (k = 0; k < ns; k++)
-      buf[m++] = ubuf(special[j][k]).d;
-  }
-  return m;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1083,31 +1123,70 @@ int FixBondCreateDestroy::pack_forward_comm(int n, int *list, double *buf,
 void FixBondCreateDestroy::unpack_forward_comm(int n, int first, double *buf) {
   int i, j, m, ns, last;
 
-  m = 0;
-  last = first + n;
-
-  if (commflag == 1) {
-    for (i = first; i < last; i++)
-      bondcount[i] = (int)ubuf(buf[m++]).i;
-
-  } else if (commflag == 2) {
-    for (i = first; i < last; i++) {
-      partner[i] = (tagint)ubuf(buf[m++]).i;
-      probability[i] = buf[m++];
-    }
-
-  } else {
-    int **nspecial = atom->nspecial;
-    tagint **special = atom->special;
+  if (stageflag == 0)
+  {
 
     m = 0;
     last = first + n;
-    for (i = first; i < last; i++) {
-      finalpartner[i] = (tagint)ubuf(buf[m++]).i;
-      ns = (int)ubuf(buf[m++]).i;
-      nspecial[i][0] = ns;
-      for (j = 0; j < ns; j++)
-        special[i][j] = (tagint)ubuf(buf[m++]).i;
+
+    if (commflag == 1)
+    {
+      for (i = first; i < last; i++)
+        bondcount[i] = (int)ubuf(buf[m++]).i;
+    }
+    else if (commflag == 2)
+    {
+      for (i = first; i < last; i++)
+      {
+        partner[i] = (tagint)ubuf(buf[m++]).i;
+        probability[i] = buf[m++];
+      }
+    }
+    else
+    {
+      int **nspecial = atom->nspecial;
+      tagint **special = atom->special;
+
+      m = 0;
+      last = first + n;
+      for (i = first; i < last; i++)
+      {
+        finalpartner[i] = (tagint)ubuf(buf[m++]).i;
+        ns = (int)ubuf(buf[m++]).i;
+        nspecial[i][0] = ns;
+        for (j = 0; j < ns; j++)
+          special[i][j] = (tagint)ubuf(buf[m++]).i;
+      }
+    }
+  }
+  else
+  {
+    if (commflag == 1)
+    {
+      m = 0;
+      last = first + n;
+      for (i = first; i < last; i++)
+      {
+        partner[i] = (tagint)ubuf(buf[m++]).i;
+        probability[i] = buf[m++];
+      }
+    }
+    else
+    {
+
+      int **nspecial = atom->nspecial;
+      tagint **special = atom->special;
+
+      m = 0;
+      last = first + n;
+      for (i = first; i < last; i++)
+      {
+        finalpartner[i] = (tagint)ubuf(buf[m++]).i;
+        ns = (int)ubuf(buf[m++]).i;
+        nspecial[i][0] = ns;
+        for (j = 0; j < ns; j++)
+          special[i][j] = (tagint)ubuf(buf[m++]).i;
+      }
     }
   }
 }
@@ -1117,20 +1196,37 @@ void FixBondCreateDestroy::unpack_forward_comm(int n, int first, double *buf) {
 int FixBondCreateDestroy::pack_reverse_comm(int n, int first, double *buf) {
   int i, m, last;
 
-  m = 0;
-  last = first + n;
+  if (stageflag == 0)
+  {
 
-  if (commflag == 1) {
+    m = 0;
+    last = first + n;
+
+    if (commflag == 1)
+    {
+      for (i = first; i < last; i++)
+        buf[m++] = ubuf(bondcount[i]).d;
+      return m;
+    }
+
     for (i = first; i < last; i++)
-      buf[m++] = ubuf(bondcount[i]).d;
+    {
+      buf[m++] = ubuf(partner[i]).d;
+      buf[m++] = distsq[i];
+    }
     return m;
   }
-
-  for (i = first; i < last; i++) {
-    buf[m++] = ubuf(partner[i]).d;
-    buf[m++] = distsq[i];
+  else
+  {
+    m = 0;
+    last = first + n;
+    for (i = first; i < last; i++)
+    {
+      buf[m++] = ubuf(partner[i]).d;
+      buf[m++] = distsq[i];
+    }
+    return m;
   }
-  return m;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1138,21 +1234,45 @@ int FixBondCreateDestroy::pack_reverse_comm(int n, int first, double *buf) {
 void FixBondCreateDestroy::unpack_reverse_comm(int n, int *list, double *buf) {
   int i, j, m;
 
-  m = 0;
+  if (stageflag == 0)
+  {
+    m = 0;
 
-  if (commflag == 1) {
-    for (i = 0; i < n; i++) {
-      j = list[i];
-      bondcount[j] += (int)ubuf(buf[m++]).i;
+    if (commflag == 1)
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        bondcount[j] += (int)ubuf(buf[m++]).i;
+      }
     }
-
-  } else {
-    for (i = 0; i < n; i++) {
+    else
+    {
+      for (i = 0; i < n; i++)
+      {
+        j = list[i];
+        if (buf[m + 1] < distsq[j])
+        {
+          partner[j] = (tagint)ubuf(buf[m++]).i;
+          distsq[j] = buf[m++];
+        }
+        else
+          m += 2;
+      }
+    }
+  }
+  else
+  {
+    m = 0;
+    for (i = 0; i < n; i++)
+    {
       j = list[i];
-      if (buf[m + 1] < distsq[j]) {
+      if (buf[m + 1] > distsq[j])
+      {
         partner[j] = (tagint)ubuf(buf[m++]).i;
         distsq[j] = buf[m++];
-      } else
+      }
+      else
         m += 2;
     }
   }
@@ -1212,8 +1332,12 @@ double FixBondCreateDestroy::compute_vector(int n) {
 
 double FixBondCreateDestroy::memory_usage() {
   int nmax = atom->nmax;
+  // Part due to create
   double bytes = nmax * sizeof(int);
   bytes = 2 * nmax * sizeof(tagint);
+  bytes += nmax * sizeof(double);
+  // Part due to break
+  bytes += 2*nmax * sizeof(tagint);
   bytes += nmax * sizeof(double);
   return bytes;
 }
@@ -1226,32 +1350,6 @@ void FixBondCreateDestroy::print_bb() {
            atom->num_bond[i]);
     for (int j = 0; j < atom->num_bond[i]; j++) {
       printf(" " TAGINT_FORMAT, atom->bond_atom[i][j]);
-    }
-    printf("\n");
-    printf("TAG " TAGINT_FORMAT ": %d nangles: ", atom->tag[i],
-           atom->num_angle[i]);
-    for (int j = 0; j < atom->num_angle[i]; j++) {
-      printf(" " TAGINT_FORMAT " " TAGINT_FORMAT " " TAGINT_FORMAT ",",
-             atom->angle_atom1[i][j], atom->angle_atom2[i][j],
-             atom->angle_atom3[i][j]);
-    }
-    printf("\n");
-    printf("TAG " TAGINT_FORMAT ": %d ndihedrals: ", atom->tag[i],
-           atom->num_dihedral[i]);
-    for (int j = 0; j < atom->num_dihedral[i]; j++) {
-      printf(" " TAGINT_FORMAT " " TAGINT_FORMAT " " TAGINT_FORMAT
-             " " TAGINT_FORMAT ",",
-             atom->dihedral_atom1[i][j], atom->dihedral_atom2[i][j],
-             atom->dihedral_atom3[i][j], atom->dihedral_atom4[i][j]);
-    }
-    printf("\n");
-    printf("TAG " TAGINT_FORMAT ": %d nimpropers: ", atom->tag[i],
-           atom->num_improper[i]);
-    for (int j = 0; j < atom->num_improper[i]; j++) {
-      printf(" " TAGINT_FORMAT " " TAGINT_FORMAT " " TAGINT_FORMAT
-             " " TAGINT_FORMAT ",",
-             atom->improper_atom1[i][j], atom->improper_atom2[i][j],
-             atom->improper_atom3[i][j], atom->improper_atom4[i][j]);
     }
     printf("\n");
     printf("TAG " TAGINT_FORMAT ": %d %d %d nspecial: ", atom->tag[i],
