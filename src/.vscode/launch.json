@@ -24,7 +24,8 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/lmp_serial_debug",
-            "args": ["-i", "scripts/in.ManyparticlesBondCreateDestroyMC.lmp"],
+            //"args": ["-i", "scripts/in.ManyparticlesBondCreateDestroyMC.lmp"],
+            "args": ["-i", "scripts/in.ManyparticlesBondCreateDestroyMC_restart.lmp", "-v", "F", "ManyparticlesBondCreateDestroyMCrho0.6Ea0Ee2MG2L20_restart1"]
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

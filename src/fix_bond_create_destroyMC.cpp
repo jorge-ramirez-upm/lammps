@@ -50,9 +50,8 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg,
   if (nevery <= 0)
     error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
 
-  // JAVI
+  // Gillespie dt
   dtGillespie = update->dt * nevery;
-  //
 
   force_reneighbor = 1;
   next_reneighbor = -1;
@@ -121,7 +120,7 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg,
       iarg += 5;
       kA = exp(-Ea / T); // el antiguo pon, ahora no depende de nevery
     }
-    // PARAMETROS DEL POTENCIAL FENE
+    // GROUP FOR FENE POTENTIAL
     else if (strcmp(arg[iarg], "FENE") == 0) {
       if (iarg + 3 > narg)
         error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
@@ -131,7 +130,7 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg,
         error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
       iarg += 3;
     }
-    // OTRO GRUPO PARA LEER LOS PAR�METROS DE LJ
+    // GROUP FOR LJ PARAMETERS
     else if (strcmp(arg[iarg], "LJ") == 0) {
       if (iarg + 3 > narg)
         error->all(FLERR, "Illegal fix bond/create/destroy/MC command");
@@ -204,14 +203,15 @@ FixBondCreateDestroyMC::FixBondCreateDestroyMC(LAMMPS *lmp, int narg,
   nmax = 0;
   partner = finalpartner = NULL;
   distsq = NULL;
+  probability = NULL; //JAVI: Not sure if needed
 
-  // JAVI: (probability = NULL; ?)
+  // Gillespie variables
   Gi = NULL;
   Gj = NULL;
   Gtagi = NULL;
   Gtagj = NULL;
   Gaccumaij = NULL;
-  //
+  pairDist = NULL;
 
   maxcreate = 0;
   maxbreak = 0;
@@ -339,6 +339,7 @@ void FixBondCreateDestroyMC::setup(int vflag) {
   // if newton_bond is set, need to sum bondcount
 
   commflag = 1;
+  stageflag = 0;
   if (newton_bond)
     comm->reverse_comm_fix(this, 1);
 }
@@ -381,7 +382,7 @@ int FixBondCreateDestroyMC::PoissonSmall(double lambda) // JAVI
     k++;
     p *=
         random
-            ->uniform(); // CAMBIAR POR EL GENERADOR DE N�s ALEATORIOS DE LAMMPS
+            ->uniform(); // JORGE, JAVI: CAMBIAR POR EL GENERADOR DE N�s ALEATORIOS DE LAMMPS
   } while (p > L);
   return k - 1;
 }
@@ -424,7 +425,7 @@ void FixBondCreateDestroyMC::post_integrate() {
       i2;
   double xtmp, ytmp, ztmp, delx, dely, delz, rsq;
   int *ilist, *jlist, *numneigh, **firstneigh;
-  int npairs, maxbonds; // JAVI: New definitions. ncreate and nbreak?
+  int npairs, maxbonds;
   tagint *slist;
 
   if (update->ntimestep % nevery)
@@ -461,26 +462,26 @@ void FixBondCreateDestroyMC::post_integrate() {
     memory->destroy(partner);
     memory->destroy(finalpartner);
     memory->destroy(distsq);
-    // JAVI:
+    // Gillespie variables:
     memory->destroy(Gi);
     memory->destroy(Gj);
     memory->destroy(Gtagi);
     memory->destroy(Gtagj);
     memory->destroy(Gaccumaij);
-	memory->destroy(pairDist);
+	  memory->destroy(pairDist);
     //
     nmax = atom->nmax;
     memory->create(partner, nmax, "bond/create/destroy/MC:partner");
     memory->create(finalpartner, nmax, "bond/create/destroy/MC:finalpartner");
     memory->create(distsq, nmax, "bond/create/destroy/MC:distsq");
     probability = distsq;
-    // JAVI
+    // Gillespie variables:
     memory->create(Gi, nmax, "bond/create/destroy/MC:Gi");
     memory->create(Gj, nmax, "bond/create/destroy/MC:Gj");
     memory->create(Gtagi, nmax, "bond/create/destroy/MC:Gtagi");
     memory->create(Gtagj, nmax, "bond/create/destroy/MC:Gtagj");
     memory->create(Gaccumaij, nmax, "bond/create/destroy/MC:Gaccumaij");
-	memory->create(pairDist, nmax, "bond/create/destroy/MC:pairDist");
+	  memory->create(pairDist, nmax, "bond/create/destroy/MC:pairDist");
     //
   }
 
@@ -533,10 +534,6 @@ void FixBondCreateDestroyMC::post_integrate() {
       jtype = type[j];
       tagint jmol = molecule[j];
 
-      // Attempt to eliminate atoms that should be bonded in another CPU
-      //if (tag[j] < tag[i] && j!=atom->map(tag[j]))
-      //   continue;
-
       possible = 0;
       if (imol == jmol && diffmol)
         continue;
@@ -558,6 +555,12 @@ void FixBondCreateDestroyMC::post_integrate() {
       if (!possible)
         continue;
 
+	  // Attempt to eliminate atoms that should be bonded in another CPU
+	  //if (tag[j] < tag[i] && j!=atom->map(tag[j]))
+	  //   continue;
+	  //if (tag[j] < tag[i] && j >= inum)
+		//  continue;
+
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
@@ -565,33 +568,37 @@ void FixBondCreateDestroyMC::post_integrate() {
       if (rsq >= cutsq)
         continue;
 
-      // JAVI: We substitute the distance criterium for the Gillespie criterium
+	  for (k = 0; k < npairs; k++) {
+		  if (tag[i] == Gtagi[k] && tag[j] == Gtagj[k])
+			  continue;
+		  if (tag[j] == Gtagi[k] && tag[i] == Gtagj[k])
+			  continue;
+	  }
+
       Gi[npairs] = i;
       Gtagi[npairs] = tag[i];
-      //Gj[npairs] = atom->map(tag[j]);
+      
+	  //Gj[npairs] = atom->map(tag[j]); //This could also work if needed.
       Gj[npairs] = j;
       Gtagj[npairs] = tag[j];
-	  //if (npairs == 0)
-		  Gaccumaij[npairs] = kA;
-	  //else
-		//  Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA;
 
-		  pairDist[npairs] = rsq;
+	  pairDist[npairs] = rsq;
+
+	  if (npairs == 0)
+		  Gaccumaij[npairs] = kA;
+	  else
+		  Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA;
 
       npairs++;
-      // JAVI: End of new criterium
     }
   }
-  
-  // LIMPIEZA DE LA LISTA DE PARES... IF Gtagj<Gtagi and Gj>nlocal then REMOVE
-  // Reconstruir Gaccumaij y npairs
 
   ncreate =
       GetPoisson(dtGillespie *
                  Gaccumaij[npairs - 1]); // JAVI: number of bonds to create as
                                          // function of npairs and Gillespie
 
-  // JAVI: Loop to define "final" partners
+  // Loop to define "final" partners
   for (i = 0; i < ncreate; i++) {
     int done = 0;
     while (!done) {
@@ -600,22 +607,21 @@ void FixBondCreateDestroyMC::post_integrate() {
         if (Gaccumaij[j] > aux)
           break;
       }
-      // UTILIZAR OTRO ARRAY (tmppartner) QUE VAYA DESDE 0 HASTA NATOMS-1 QUE SE INICIALICE A 0 Y SE VAYA RELLENANDO A MEDIDA QUE SE CREAN ENLACES
+      // ¿¿¿UTILIZAR OTRO ARRAY (tmppartner) QUE VAYA DESDE 0 HASTA NATOMS-1 QUE SE INICIALICE A 0 Y SE VAYA RELLENANDO A MEDIDA QUE SE CREAN ENLACES???
       // EN LUGAR DE !partner[Gi[j]], miramos !tmppartner[tag[Gi[j]]-1], y TAMBIEN !partner[Gj[j]], miramos !tmppartner[tag[Gj[j]]-1]
       if (!partner[Gi[j]] &&
-          !partner[Gj[j]]) { // JAVI: We use Partner as if it was Finalpartner
+          !partner[Gj[j]]) { // We use Partner as if it was Finalpartner
         partner[Gi[j]] =
-            tag[Gj[j]]; // JAVI: Gi is the id of the atom (local or ghost)
+            Gtagj[j]; // Gi is the id of the atom (local or ghost)
 		distsq[Gi[j]] = pairDist[j];
 		probability[Gi[j]] = 1.0;
-        partner[Gj[j]] = tag[Gi[j]];
+        partner[Gj[j]] = Gtagi[j];
 		distsq[Gj[j]] = pairDist[j];
 		probability[Gj[j]] = 1.0;
 
         done = 1;
 
         /////////////////////////////////
-        // CHECK THIS PART OF THE CODE!!!
         maxbonds = i + 1;
         for (k = 0; k < npairs; k++) {
           if (!partner[Gi[k]] && !partner[Gj[k]]) {
@@ -629,7 +635,6 @@ void FixBondCreateDestroyMC::post_integrate() {
       }
     }
   }
-  // JAVI: End of loop to define partners
 
   // reverse comm of distsq and partner
   // not needed if newton_pair off since I,J pair was seen by both procs
@@ -641,13 +646,6 @@ void FixBondCreateDestroyMC::post_integrate() {
   // each atom now knows its winning partner
   // for prob check, generate random value for each atom with a bond partner
   // forward comm of partner and random value, so ghosts have it
-
-  // JAVI: No need to set a probability
-  /*if (pon < 1.0) {
-    for (i = 0; i < nlocal; i++)
-      if (partner[i]) probability[i] = random->uniform();
-  }*/
-  // JAVI: End of not-needed probability
 
   commflag = 2;
   comm->forward_comm_fix(this, 2);
@@ -669,17 +667,6 @@ void FixBondCreateDestroyMC::post_integrate() {
       continue;
 
     // apply probability constraint using RN for atom with smallest ID
-
-    // JAVI: Delete this condition
-    /*if (pon < 1.0) {
-      printf("CREATE: %d %d ", tag[i], tag[j]);
-      if (tag[i] < tag[j]) {
-        if (probability[i] >= pon) continue;
-      } else {
-        if (probability[j] >= pon) continue;
-      }
-    }*/
-    // JAVI: End of condition to be deleted
 
     // if newton_bond is set, only store with I or J
     // if not newton_bond, store bond with both I and J
@@ -823,20 +810,13 @@ void FixBondCreateDestroyMC::post_integrate() {
     if (rsq <= cutminsq)
       continue;
 
-    // JAVI: Delete this operations
-    /*if (rsq > distsq[i1]) {
-      partner[i1] = tag[i2];
-      distsq[i1] = rsq;
-    }
-    if (rsq > distsq[i2]) {
-      partner[i2] = tag[i1];
-      distsq[i2] = rsq;
-    }*/
-    // JAVI: End of operations deleted
+    // Gillespie criterium
+    Gi[npairs] = i1;
+	//Gj[npairs] = atom->map(tag[i2]); // This would also work
+	Gj[npairs] = i2;
 
-    // JAVI: New operations
-    Gi[npairs] = i1; // JAVI
-    Gj[npairs] = atom->map(tag[i2]);
+	pairDist[npairs] = rsq;
+
     double fact = exp(UBondedSticker(rsq) / T);
     if (fact > maxG)
       fact = maxG;
@@ -845,14 +825,11 @@ void FixBondCreateDestroyMC::post_integrate() {
     else
       Gaccumaij[npairs] = Gaccumaij[npairs - 1] + kA * fact;
 
-	pairDist[npairs] = rsq;
-
     npairs++;
-    // JAVI: End of new operations
   }
 
-  // JAVI: Start loop for "final" partners to break
-  nbreak = GetPoisson(dtGillespie * Gaccumaij[npairs - 1]); // JAVI
+  // Start loop for "final" partners to break
+  nbreak = GetPoisson(dtGillespie * Gaccumaij[npairs - 1]);
   if (nbreak > npairs)
     nbreak = npairs;
 
@@ -878,7 +855,6 @@ void FixBondCreateDestroyMC::post_integrate() {
       }
     }
   }
-  // JAVI: End loop for "final" partners to break
 
   // reverse comm of partner info
   if (force->newton_bond)
@@ -914,20 +890,6 @@ void FixBondCreateDestroyMC::post_integrate() {
     j = atom->map(partner[i]);
     if (partner[j] != tag[i])
       continue;
-
-    // apply probability constraint using RN for atom with smallest ID
-
-    // if (tag[i]>tag[j]) continue;
-
-    // JAVI: Delete probability condition
-    /*if (poff < 1.0) {
-      if (tag[i] < tag[j]) {
-        if (probability[i] >= poff) continue;
-      } else {
-        if (probability[j] >= poff) continue;
-      }
-    }*/
-    // JAVI: End of deleted condition
 
     // delete bond from atom I if I stores it
     // atom J will also do this
