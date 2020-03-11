@@ -25,7 +25,8 @@
             "request": "launch",
             "program": "${workspaceFolder}/lmp_serial_debug",
             //"args": ["-i", "scripts/in.ManyparticlesBondCreateDestroyMC.lmp"],
-            "args": ["-i", "scripts/in.ManyparticlesBondCreateDestroyMC_restart.lmp", "-v", "F", "ManyparticlesBondCreateDestroyMCrho0.6Ea0Ee2MG2L20_restart1"]
+            //"args": ["-i", "scripts/in.ManyparticlesBondCreateDestroyMC_restart.lmp", "-v", "F", "ManyparticlesBondCreateDestroyMCrho0.6Ea0Ee2MG2L20_restart1"]
+            "args": ["-i", "in.alkanesNVT.lmp", "-v", "T", "200", "-v", "F", "n_butane_bonds_angles_dihedrals_4x4x4"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
