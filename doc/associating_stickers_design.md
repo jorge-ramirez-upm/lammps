@@ -1,221 +1,147 @@
-# Design: monovalent transient associating stickers
+# Design: monovalent transient stickers in a Kremer--Grest melt
 
-## Scope and version inspected
+## Frozen physical model
 
-This proposal targets this clean checkout, which reports `LAMMPS_VERSION` as
-**2 Sep 2026** (git `patch_24Jan2020-32726-g12ed046a49`).  It adds reversible,
-monovalent sticker associations between selected atoms.  An association is
-state held by a fix and a force evaluated by a pair style; it is never a
-LAMMPS bond.
+This proposal targets the LAMMPS **2 Sep 2026** checkout (`patch_24Jan2020-32726-g12ed046a49`) and fixes the first physical model before any C++ implementation.  It is for unentangled or entangled associating-polymer melts in KG reduced LJ units: `epsilon = sigma = m = k_B = 1`.
 
-Consequently, this feature must not edit `atom->num_bond`, `bond_atom`,
-`bond_type`, special-neighbor lists, molecular topology, or any permanent
-polymer topology.  Existing bond, angle, dihedral, and improper interactions
-remain exactly as read from the data file.
+All beads have WCA excluded volume,
 
-The first implementation should deliberately cover one sticker type and one
-association potential.  Multiple sticker chemistries, multivalency, kinetic
-models with history, and dynamic topology are separate future work.
+```
+U_WCA(r) = 4[(1/r)^12 - (1/r)^6] + 1,  r < r_WCA = 2^(1/6),
+             0,                        r >= r_WCA.
+```
 
-## Smallest implementation boundary
+Permanent backbone bonds remain ordinary LAMMPS `bond_style fene`, with `K=30` and `R0=1.5`, including their normal KG repulsive LJ term.  A transient sticker association is monovalent state held by a fix.  It never creates, deletes, or alters a LAMMPS bond, angle, dihedral, improper, special-neighbor list, or permanent polymer topology.
 
-Add one self-contained package (suggested name `ASSOCIATING`) and only these
-new implementation files:
+For a transient association, add **only** the logarithmic FENE term:
 
-| File | Responsibility |
+```
+U_FENE(r) = -1/2 K R0^2 ln[1 - (r/R0)^2],  0 <= r < R0,
+U_assoc(r) = U_FENE(r) - U_FENE(r_star) - E_e.
+```
+
+`r_star` is the minimum of `U_WCA + U_FENE` for `K=30`, `R0=1.5`; calculate it from the analytic functions, never a hard-coded decimal.  `E_e > 0` is the stabilization at that minimum.  The transient force is only
+
+```
+F_assoc_vector = -K (x_i-x_j) / [1-(r/R0)^2].
+```
+
+The chemical-state energies at fixed coordinates are
+
+```
+U_A(r) = U_WCA(r)
+U_B(r) = U_WCA(r) + U_FENE(r) - U_FENE(r_star) - E_e.
+```
+
+Thus `Delta_U = U_B-U_A = U_assoc`: WCA cancels from the chemical energy difference but remains physically present exactly once in both states.  An associated state at `r >= R0` is invalid and must raise the normal FENE error, never clamp or automatically rupture.
+
+`bond_style fene` cannot implement the transient contribution.  In this checkout, [`src/MOLECULE/bond_fene.cpp`](../src/MOLECULE/bond_fene.cpp) explicitly adds both log-FENE and WCA LJ.  Reusing it would double-count WCA; adding a transient topology bond would also change `special_bonds` behavior.  Both routes are forbidden.
+
+## Required configuration and invariants
+
+The intended additive configuration is equivalent to:
+
+```
+units lj
+bond_style fene
+bond_coeff ... 30.0 1.5 1.0 1.0
+pair_style hybrid/overlay lj/cut 1.122462048309373 associating 1.5
+pair_coeff * * lj/cut 1.0 1.0 1.122462048309373
+pair_coeff * * associating 30.0 1.5 E_e
+special_bonds fene
+```
+
+`special_bonds fene` gives permanent 1--2 backbone pairs their WCA contribution through `bond_style fene`; every other bead pair receives WCA through `lj/cut`.  The transient style provides no WCA and never applies or changes `special_lj`.  The first version rejects permanent 1--2 special neighbors as association candidates: they are normally omitted from simple pair lists and are not intended non-backbone sticker associations.
+
+The invariants are:
+
+* Exactly one KG WCA contribution per bead pair.
+* A reciprocal transient association adds one shifted log-FENE term and no LJ/WCA term.
+* `tagint partner[i] == 0` means free; otherwise it is the ID of exactly one reciprocal partner.
+* Transient state never changes permanent topology or its `special_bonds` classification.
+* A bound pair is force-active for all `r < R0`, including `r > r_assoc`.
+* Equilibrium mode has no distance-triggered forced rupture.
+
+## Association range and detailed-balance kinetics
+
+`r_assoc` is an explicit formation-cutoff parameter.  Its initial reference value is `2^(1/6)`, but it is never hard-coded.  It limits formation candidates only.  The pair-style neighbor cutoff is `R0`, not `r_assoc`, so an associated pair remains in the force list until its FENE limit.
+
+Within `r < r_assoc`, local detailed balance requires
+
+```
+k_c(r)/k_b(r) = exp[-Delta_U(r)/T].
+```
+
+The first model uses explicit LJ-unit temperature `T` and attempt frequency `nu`:
+
+```
+k_c(r) = nu min(1, exp[-Delta_U(r)/T])
+k_b(r) = nu min(1, exp[ Delta_U(r)/T])
+p = 1 - exp(-k * Nevery * dt).
+```
+
+The temperature is an input, never an instantaneous kinetic temperature.  At `r >= r_assoc`, both transition rates are zero.  A bound pair can stretch outside the reaction domain, retain its FENE force, and dissociate after returning: this is gated equilibrium kinetics, not forced rupture.
+
+Suggested syntax:
+
+```
+fix ID sticker-group associating/kinetics Nevery seed nu T r_assoc
+pair_style associating R0
+pair_coeff * * K R0 E_e
+```
+
+The pair owns `K`, `R0`, `E_e`, `r_star`, and `Delta_U(r)`; the fix queries it rather than duplicating coefficients.
+
+## State, communication, and kinetic scheduler
+
+`fix associating/kinetics` owns `tagint partner[nmax]` and implements grow/copy/set, border, exchange, and restart callbacks.  It packs tag IDs through `ubuf`.  After a state change it calls `comm->forward_comm(this)`, keeping ghosts current without a neighbor rebuild.
+
+The fix requests an occasional full list with fixed cutoff `r_assoc` for kinetic candidates.  `pair associating` requests a standard half list at `R0`, filters it for reciprocal partner IDs, and performs normal Newton force and energy/virial tallying.  It must not use `special_lj` to scale the transient force and initially rejects rRESPA inner/middle use.
+
+The earlier mutual-nomination scheme is removed: in a crowded melt its formation probability depends on competing candidates while its reverse move does not, so it violates detailed balance.  The CPU reference must use a serial random-scan Metropolis sweep over unordered eligible edges:
+
+1. Build free--free formation and associated breakage edges once by global tag order.
+2. Process a reproducible global random permutation keyed by seed, timestep, and pair IDs; recheck endpoints before every move.
+3. Accept with `p_c` or `p_b`, update both owning ranks transactionally, then refresh ghosts before a conflicting edge.
+
+This preserves the specified gated detailed balance and monovalency.  It may require explicit MPI owner-to-owner messages; writing a ghost is not sufficient.  A parallel coloring/event scheduler is future work only after it reproduces this serial kernel's stationary distribution and rates.
+
+## Minimal file boundary and future Kokkos path
+
+Add only these new files:
+
+| File | Role |
 | --- | --- |
-| `src/ASSOCIATING/fix_associating_kinetics.h` | Registers `fix associating/kinetics`; declares the per-atom partner state and a small accessor for the pair style. |
-| `src/ASSOCIATING/fix_associating_kinetics.cpp` | Owns association/breakage decisions, migration, restart, and ghost-state communication. |
-| `src/ASSOCIATING/pair_associating.h` | Registers `pair_style associating`. |
-| `src/ASSOCIATING/pair_associating.cpp` | Applies the transient association force only; it does not create or delete topology. |
-| `src/KOKKOS/pair_associating_kokkos.h` | Future `pair_style associating/kk` declaration. |
-| `src/KOKKOS/pair_associating_kokkos.cpp` | Future Kokkos implementation, including device mirrors and device communication. |
+| `src/ASSOCIATING/fix_associating_kinetics.h/.cpp` | State, serial kinetics, MPI transaction, migration/restart, ghost communication. |
+| `src/ASSOCIATING/pair_associating.h/.cpp` | Shifted log-FENE force, `Delta_U`, `r_star`, and `R0` force list. |
+| `src/KOKKOS/pair_associating_kokkos.h/.cpp` | Future CUDA/Kokkos force implementation. |
 
-The two Kokkos files are a planned second phase, not a prerequisite for the
-CPU implementation.  No core LAMMPS file needs an edit: style registration is
-in each new header's existing `FIX_CLASS`/`PAIR_CLASS` block, and normal
-package discovery builds the added files.  Documentation, examples, and tests
-can likewise live under the new package and `unittest/` without changing
-existing source files.
+No core LAMMPS source changes are required.  The Kokkos pair derives from the CPU pair plus `KokkosBase`; the fix supplies a `DualView<tagint*>` synchronized from host kinetics before device force calculation.  GPU kinetics is a separate future feature.
 
-## State and ownership
+## Exact local reference sources
 
-`fix associating/kinetics` stores exactly one primary per-atom datum:
-
-```
-tagint partner[nmax]       // 0: unbound; otherwise global atom ID of partner
-```
-
-Although this is integer state, it must be `tagint`, not `int`: a LAMMPS atom
-ID can exceed the range of `int`.  A nonzero value is valid only when it is
-reciprocal (`partner[i] == tag[j]` and `partner[j] == tag[i]`).  This makes
-monovalency structural: no atom has capacity for a second transient partner.
-
-The fix allocates and initializes the array with `grow_arrays()`, copies it in
-`copy_arrays()`, and zeros it in `set_arrays()`.  It implements
-`pack_border()`/`unpack_border()` so pair calculations can inspect the partner
-of ghost atoms.  It implements `pack_exchange()`/`unpack_exchange()` so an
-atom takes its association state when it migrates between MPI ranks.  It also
-implements `pack_restart()`, `unpack_restart()`, `size_restart()`, and
-`maxsize_restart()` so a restart preserves live associations.  Encode the
-`tagint` in a `double` communication slot with `ubuf`, as LAMMPS does for
-integer payloads.
-
-The fix exposes a narrow, read-only accessor returning `partner` and an
-explicit `refresh_ghosts()` method.  The pair looks up the required fix by
-style/ID during `init_style()` and errors if it is absent, duplicated, or is
-configured for a different group.  It receives neither a writable atom-state
-pointer nor authority to run kinetics.
-
-After each state change, the fix calls `comm->forward_comm(this)`.  Thus the
-next force evaluation sees matching local and ghost state even when the
-neighbor list was not rebuilt.  This is essential; relying only on border
-communication at neighbor rebuilding produces stale cross-rank associations.
-
-## User-facing syntax
-
-Keep the initial syntax small and explicit:
-
-```
-fix ID group-ID associating/kinetics Nevery seed kon koff rreact
-pair_style associating rcut
-pair_coeff * * k r0 rcut
-```
-
-`fix` acts only on atoms in its group.  `Nevery` is the interval between
-kinetic updates; `kon` and `koff` are rates in the current LAMMPS time units;
-`rreact` is the formation cutoff and must be no larger than the pair cutoff.
-The pair style contributes a harmonic transient tether
-
-```
-U(r) = 1/2 k (r-r0)^2,          r < rcut,
-```
-
-for reciprocal associated pairs only.  It should use the usual pair energy
-and virial tallying.  The production implementation must state whether this
-is intended for `pair_style hybrid` (recommended: yes, as an additive style)
-and reject `special_bonds` scaling for the transient interaction: it is not a
-permanent bond.
-
-## Kinetic update algorithm
-
-Run the fix at `POST_FORCE`, so a state selected at step `t` affects the pair
-force beginning at step `t+1`; this avoids changing force state partway
-through a force evaluation.  Request an occasional full neighbor list with a
-cutoff at least `rreact` in `init()`/`init_list()`.  At each `Nevery` update:
-
-1. Break each existing association with probability
-   `p_off = 1 - exp(-koff * Nevery * dt)`.  Generate the variate from a
-   stateless hash of `(seed, timestep, min(tag_i,tag_j), max(tag_i,tag_j))`.
-   Both owners therefore make the same break decision without messages.
-2. For every currently free local sticker, enumerate free candidates in the
-   full list that are in the fix group and within `rreact`.  Each candidate
-   pair independently passes a formation trial with
-   `p_on = 1 - exp(-kon * Nevery * dt)`, keyed by the same unordered pair and
-   timestep hash.
-3. A free atom nominates the passing candidate with the lowest deterministic
-   priority hash.  Forward-communicate nominations as a second temporary
-   `tagint` fix array (or reuse an internally allocated `proposal[nmax]`).
-4. Form an association only when the nomination is mutual.  Both owning ranks
-   then write the reciprocal `partner` values locally.  Clear proposals and
-   forward-communicate `partner`.
-
-This mutual-winner rule is intentionally simple and MPI decomposition
-independent: it requires no remote writes, all-to-all tag lookup, or topology
-transactions.  Competition reduces the effective formation rate in dense
-sticker regions, so `kon` is an attempted-pair rate, not an unconditional
-macroscopic association rate.  The manual must say this plainly.  If an
-exact non-mutual proposal/acceptance kinetic scheme becomes necessary, add it
-as a separate mode after measuring that need; do not complicate the first
-implementation.
-
-Use `tag[i] != tag[j]`, reciprocal-state checks, and the full-list group mask
-in all phases.  If a stored partner disappears (e.g., atom deletion by an
-unrelated fix), clear the local state at the next update and warn once; this
-is preferable to applying a force from a dangling tag.
-
-## Pair force algorithm
-
-`pair associating` requests a standard half neighbor list and loops like
-`pair_lj_cut`.  For each neighbor `j`, it applies the tether only if both
-partner IDs are reciprocal.  To count each association once, use the normal
-half-list ownership or, for a full-list configuration, a `tag[i] < tag[j]`
-guard.  The pair reads coordinates, types only if type-dependent coefficients
-are later added, forces, and the fix's ghost-refreshed partner array.  It
-does not allocate a second persistent per-atom association array and does not
-call any bond or special-neighbor API.
-
-The pair should set `single_enable = 0` initially and document that it cannot
-report an association from `single()` without fix state.  It should be
-compatible with Newton pair on and off; test both.  Reject rRESPA inner/middle
-levels in the first version if a correct splitting policy is not implemented.
-
-## Future CUDA / Kokkos design
-
-Implement `pair associating/kk` by following `pair_bondval/kk`, rather than
-copying a CPU loop into a CUDA lambda:
-
-* derive from the CPU pair and `KokkosBase`, register device/host aliases, set
-  `kokkosable`, data masks, and Kokkos neighbor-list flags;
-* give the fix a `DualView<tagint*>` for `partner` and synchronize it after
-  host kinetics and after exchange/border operations;
-* make the pair read a device view of partner IDs and atom tags, then execute
-  the reciprocal check and tether tally in the Kokkos neighbor functor;
-* retain host `fix associating/kinetics` initially.  Before each CUDA pair
-  call it syncs the owner-updated partner view to device; after kinetic updates
-  and fix forward communication it marks the host view modified.  No device
-  atom-state mutation is needed in this phase;
-* if kinetics later moves to the GPU, add `fix associating/kinetics/kk` as a
-  separate pair of files using `fix_neigh_history/kk` as the exchange/restart
-  reference.  Do not make the CPU fix depend on Kokkos.
-
-This separation keeps the initial CPU design small while preserving the data
-layout and synchronization boundary required by CUDA.
-
-## Reference implementations in this checkout
-
-| Need | Exact reference files | Pattern to reuse |
+| Need | Files | Pattern |
 | --- | --- | --- |
-| Simple pair loop | `src/pair_lj_cut.h`, `src/pair_lj_cut.cpp` | Style registration, neighbor traversal, Newton handling, energy/virial tally, coefficients. |
-| Per-atom pair communication | `src/EXTRA-PAIR/pair_bondval.h`, `src/EXTRA-PAIR/pair_bondval.cpp` | `comm_forward`/`comm_reverse`, per-atom scratch allocation, and a staged pair calculation. |
-| Fixed-size per-atom state across ghosting, migration, and restart | `src/fix_property_atom.h`, `src/fix_property_atom.cpp` | `grow/copy/set`, border, exchange, restart hooks, and `ubuf` encoding. |
-| Variable per-atom partner IDs across migration/restart | `src/fix_neigh_history.h`, `src/fix_neigh_history.cpp` | Partner IDs as `tagint`, restart record layout, and ownership-aware history. |
-| Simple Kokkos pair | `src/KOKKOS/pair_lj_cut_kokkos.h`, `src/KOKKOS/pair_lj_cut_kokkos.cpp` | `DualView` parameters, device/host aliases, data masks, and Kokkos neighbor dispatch. |
-| Kokkos pair with per-atom communication | `src/KOKKOS/pair_bondval_kokkos.h`, `src/KOKKOS/pair_bondval_kokkos.cpp` | Device per-atom buffers, communication callbacks, scatter views, and staged force kernels. |
-| Kokkos per-atom migration/restart | `src/KOKKOS/fix_neigh_history_kokkos.h`, `src/KOKKOS/fix_neigh_history_kokkos.cpp` | Kokkos exchange hooks and device mirror ownership. |
+| KG FENE definition | `src/MOLECULE/bond_fene.h`, `src/MOLECULE/bond_fene.cpp`, `doc/src/bond_fene.rst` | Log term, WCA term to exclude, and FENE-limit behavior. |
+| WCA pair loop | `src/pair_lj_cut.h`, `src/pair_lj_cut.cpp` | Traversal, Newton handling, energy/virial tally. |
+| Permanent topology exclusions | `doc/src/special_bonds.rst` | 1--2 exclusions and WCA ownership. |
+| Per-atom state | `src/fix_property_atom.h`, `src/fix_property_atom.cpp` | Grow/border/exchange/restart and `ubuf`. |
+| Partner IDs | `src/fix_neigh_history.h`, `src/fix_neigh_history.cpp` | `tagint` partner storage and restart layout. |
+| Fixed full list | `src/fix_group.cpp`, `src/neigh_request.h`, `src/neigh_list.h` | `REQ_FULL`, `REQ_OCCASIONAL`, `set_cutoff_fixed`. |
+| Kokkos pair/data | `src/KOKKOS/pair_lj_cut_kokkos.h/.cpp`, `src/KOKKOS/pair_bondval_kokkos.h/.cpp` | Dual views, masks, device lists, per-atom buffers. |
+| Kokkos migration | `src/KOKKOS/fix_neigh_history_kokkos.h/.cpp` | Future device exchange/restart. |
 
-## Tests
+## Acceptance tests
 
-Add tests with the new package, avoiding changes to unrelated test sources.
+1. At several `r < R0`, compare free force/energy with WCA and associated force/energy with `U_WCA + U_FENE - U_FENE(r_star) - E_e` analytically.
+2. Below `r_WCA`, verify associated minus free energy equals `U_assoc` with no second WCA term; a `bond_fene`-like extra WCA must fail.
+3. Minimize `U_WCA+U_FENE`, verify `r_star`, `U_assoc(r_star)=-E_e`, and associated total `U_WCA(r_star)-E_e`.
+4. Verify formation, breakage, migration, and restart leave permanent bond lists, special-neighbor counts, and backbone FENE energy unchanged; reject permanent 1--2 sticker candidates.
+5. Form below `r_assoc`, stretch to `r_assoc < r < R0`, and verify force and energy persist without rupture; require the FENE error at or beyond `R0`.
+6. At fixed separations and temperatures, measure `k_c/k_b` against `exp[-U_assoc/T]`; for three stickers compare serial-scheduler probabilities with explicit Boltzmann enumeration.
+7. Test reciprocal monovalency, MPI migration without a neighbor rebuild, restart equivalence, and Newton pair on/off.
+8. Future: compare CPU and CUDA `/kk` forces, energy, virial, and per-atom energy with frozen kinetics, then after host updates and migration.
 
-1. **Two-sticker force and topology test.**  Two sticker atoms at a known
-   separation with manually initialized/restarted reciprocal state must give
-   the harmonic analytic force, energy, and virial.  Assert `nbonds`, each
-   atom's permanent bond count, bond list, and special-neighbor counts are
-   unchanged before and after repeated association updates.
-2. **Monovalency and competition test.**  Place three stickers within
-   `rreact`.  Across many seeded updates, assert every nonzero partner ID is
-   reciprocal and no atom has more than one partner.  Repeat with a different
-   MPI decomposition and require the same partner-ID trajectory for a fixed
-   seed.
-3. **Kinetics limits.**  With `kon=0`, no association forms; with `koff=0`,
-   an established association never breaks; with a very large `koff`, survival
-   matches `exp(-koff*Nevery*dt)` statistically.  At low density, measure the
-   attempted-pair formation probability against
-   `1-exp(-kon*Nevery*dt)` within a binomial confidence interval.
-4. **MPI migration and ghost test.**  Drive an associated pair across a
-   processor boundary without forcing a neighbor rebuild each timestep.
-   Verify reciprocal state, force, and energy survive migration and change
-   immediately after a break/form event.  Run with Newton pair on and off.
-5. **Restart equivalence test.**  Compare an uninterrupted seeded run with a
-   run split by `write_restart`/`read_restart`; partner IDs, energy, and
-   positions after the same number of steps must match.
-6. **CPU/Kokkos equivalence test (future phase).**  For a fixed initial state
-   and no kinetic events, compare CPU `associating` with CUDA
-   `associating/kk` forces, energy, virial, and per-atom energy within the
-   established Kokkos precision tolerance.  Then exercise host kinetics plus
-   device force evaluation across migration.
+## Architectural concern before coding
 
-The first three tests are the minimum acceptance set.  The MPI migration and
-restart tests are required before claiming production readiness; the Kokkos
-comparison is required before enabling the `/kk` style.
+Exact detailed balance and melt-scale performance conflict here.  The serial random-scan reference kernel is physically correct, but global ordering and remote MPI updates may be expensive.  Proceed with it only if it is acceptable for initial system sizes.  Otherwise, design and validate a parallel scheduler against its Boltzmann distribution before implementing kinetics.
