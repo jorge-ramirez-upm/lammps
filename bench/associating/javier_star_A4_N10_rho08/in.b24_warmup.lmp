@@ -1,0 +1,46 @@
+# Javier's 1000 four-arm KG stars, N=10, rho_poly=0.8, rho=0.85.
+# The supplied data file is equilibrated without transient associations.
+
+units           lj
+atom_style      bond
+boundary        p p p
+special_bonds   fene
+atom_modify     map yes
+
+read_data       Stars_NA4N10C1000rho0.85rhopoly0.8.equilibrated.lammpsdat
+
+# Data-file types: 1 = ordinary polymer monomer, 2 = terminal sticker,
+# 3 = solvent. There are 4000 type-2 beads (four per star).
+group           stickers type 2
+
+bond_style      fene
+bond_coeff      1 30.0 1.5 1.0 1.0
+
+# One WCA term for every non-backbone pair; associating adds only log-FENE.
+variable        rwca equal 2.0^(1.0/6.0)
+pair_style      hybrid/overlay lj/cut ${rwca} associating
+pair_coeff      * * lj/cut 1.0 1.0 ${rwca}
+pair_coeff      * * associating 30.0 1.5 8.0
+
+neighbor        0.6 bin
+neigh_modify    every 1 delay 1 check yes
+comm_modify     vel yes
+
+timestep        0.01
+velocity        all create 1.0 4839876 mom yes rot yes dist gaussian
+fix             integrate all nve
+fix             thermostat all langevin 1.0 1.0 2.0 48279 zero yes
+
+# nu0=10 is a benchmark-only prefactor: no transferable legacy value was
+# found in this repository. At Ea=4 and Nevery*dt=1, q is about 0.167.
+# r_assoc is the design-reference WCA cutoff and is below associating R0=1.5.
+fix             kinetics stickers associating/kinetics 100 492845 10.0 4.0 1.0 ${rwca}
+
+thermo          1000
+thermo_style    custom step temp pe etotal f_kinetics[1] f_kinetics[2] f_kinetics[3]
+thermo_modify   norm no
+
+# B2.4 preparation only: 500 reaction sweeps; this is not rigorous equilibration.
+thermo          1000
+run             50000
+write_restart   javier_b24_warmup.restart

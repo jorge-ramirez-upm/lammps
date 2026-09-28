@@ -20,6 +20,7 @@ class FixAssociatingKinetics : public Fix {
   void init() override;
   void init_list(int, class NeighList *) override;
   void end_of_step() override;
+  void post_run() override;
   void grow_arrays(int) override;
   void copy_arrays(int, int, int) override;
   void set_arrays(int) override;
@@ -48,8 +49,13 @@ class FixAssociatingKinetics : public Fix {
   int debug_pair;
   int seed;
   int kinetics;
+  int timing;
   double nu0, ea, temperature, r_assoc;
   bigint created, broken;
+  bigint timing_sweeps, timing_stickers, timing_edges_sum, timing_edges_min, timing_edges_max;
+  bigint timing_active_sum, timing_active_min, timing_active_max;
+  bigint timing_created0, timing_broken0;
+  double timing_stage[5];
   std::vector<Event> accepted_events;
   class NeighList *list;
   class PairAssociating *pair;

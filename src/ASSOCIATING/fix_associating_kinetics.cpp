@@ -23,9 +23,9 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 
 FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), seed(0), kinetics(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), list(nullptr), pair(nullptr), nmax_old(0)
+    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), seed(0), kinetics(0), timing(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), timing_sweeps(0), timing_stickers(0), timing_edges_sum(0), timing_edges_min(0), timing_edges_max(0), timing_active_sum(0), timing_active_min(0), timing_active_max(0), timing_created0(0), timing_broken0(0), list(nullptr), pair(nullptr), nmax_old(0)
 {
-  if (narg != 12 && narg != 9 && (narg != 3 && (narg != 6 || strcmp(arg[3],"debug_pair") != 0)))
+  if (narg != 3 && (narg != 6 || strcmp(arg[3],"debug_pair") != 0) && narg < 9)
     error->all(FLERR,"Illegal fix associating/kinetics command");
   if (narg == 6) {
     first = utils::tnumeric(FLERR,arg[4],false,lmp);
@@ -33,16 +33,19 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
     if (first <= 0 || second <= 0 || first == second)
       error->all(FLERR,"Invalid debug association pair");
     debug_pair = 1;
-  } else if (narg == 9 || narg == 12) {
+  } else if (narg >= 9) {
     nevery=utils::inumeric(FLERR,arg[3],false,lmp); seed=utils::inumeric(FLERR,arg[4],false,lmp);
     nu0=utils::numeric(FLERR,arg[5],false,lmp); ea=utils::numeric(FLERR,arg[6],false,lmp);
     temperature=utils::numeric(FLERR,arg[7],false,lmp); r_assoc=utils::numeric(FLERR,arg[8],false,lmp);
     if (nevery<=0 || seed<=0 || nu0<0 || ea<0 || temperature<=0 || r_assoc<=0) error->all(FLERR,"Illegal associating kinetics parameters");
     kinetics=1;
-    if (narg == 12) {
-      if (strcmp(arg[9],"debug_pair") != 0) error->all(FLERR,"Illegal fix associating/kinetics command");
-      first=utils::tnumeric(FLERR,arg[10],false,lmp); second=utils::tnumeric(FLERR,arg[11],false,lmp);
-      if(first<=0 || second<=0 || first==second) error->all(FLERR,"Invalid debug association pair"); debug_pair=1;
+    for (int i=9; i<narg;) {
+      if (strcmp(arg[i],"timing") == 0) { timing=1; ++i; }
+      else if (strcmp(arg[i],"debug_pair") == 0 && i+2<narg) {
+        first=utils::tnumeric(FLERR,arg[i+1],false,lmp); second=utils::tnumeric(FLERR,arg[i+2],false,lmp);
+        if(first<=0 || second<=0 || first==second) error->all(FLERR,"Invalid debug association pair");
+        debug_pair=1; i+=3;
+      } else error->all(FLERR,"Illegal fix associating/kinetics command");
     }
   }
   peratom_flag = 1;
@@ -75,6 +78,12 @@ void FixAssociatingKinetics::init()
   if (kinetics) { auto *req=neighbor->add_request(this,NeighConst::REQ_FULL|NeighConst::REQ_OCCASIONAL); req->set_cutoff_fixed(r_assoc); }
   if (debug_pair) initialize_debug_pair();
   comm->forward_comm(this);
+  if (timing) {
+    timing_sweeps=timing_stickers=timing_edges_sum=timing_active_sum=0;
+    timing_edges_min=timing_edges_max=timing_active_min=timing_active_max=0;
+    timing_created0=created; timing_broken0=broken;
+    for (double &value : timing_stage) value=0.0;
+  }
 }
 void FixAssociatingKinetics::init_list(int,NeighList *ptr) { list=ptr; }
 static uint64_t ahash(uint64_t x) { x+=UINT64_C(0x9e3779b97f4a7c15); x=(x^(x>>30))*UINT64_C(0xbf58476d1ce4e5b9); x=(x^(x>>27))*UINT64_C(0x94d049bb133111eb); return x^(x>>31); }
@@ -110,6 +119,7 @@ void FixAssociatingKinetics::end_of_step()
 {
   if (update->ntimestep % nevery || !list) return;
   accepted_events.clear();
+  double start = timing ? MPI_Wtime() : 0.0;
   neighbor->build_one(list);
   std::vector<tagint> local_states;
   for (int i=0;i<atom->nlocal;++i)
@@ -122,6 +132,7 @@ void FixAssociatingKinetics::end_of_step()
   for(int ii=0;ii<list->inum;++ii) { int i=list->ilist[ii]; if(!(atom->mask[i]&groupbit)) continue; int *n=list->firstneigh[i];
     for(int jj=0;jj<list->numneigh[i];++jj) { int j=n[jj]&NEIGHMASK; if(!(atom->mask[j]&groupbit)||((n[jj]>>SBBITS)&3)==1) continue; if(atom->tag[i]>=atom->tag[j]) continue;
       double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); double rsq=dx*dx+dy*dy+dz*dz; if(rsq<r_assoc*r_assoc) { local_edge_tags.push_back(atom->tag[i]); local_edge_tags.push_back(atom->tag[j]); local_edge_r.push_back(std::sqrt(rsq)); } }}
+  if (timing) { timing_stage[0] += MPI_Wtime()-start; start=MPI_Wtime(); }
   int nstate=local_states.size()/3, nedge=local_edge_r.size();
   std::vector<int> state_counts(comm->nprocs), edge_counts(comm->nprocs), state_offsets(comm->nprocs), edge_offsets(comm->nprocs);
   MPI_Allgather(&nstate,1,MPI_INT,state_counts.data(),1,MPI_INT,world);
@@ -135,6 +146,7 @@ void FixAssociatingKinetics::end_of_step()
   MPI_Allgatherv(local_states.data(),3*nstate,MPI_LMP_TAGINT,global_states.data(),state_counts3.data(),state_offsets3.data(),MPI_LMP_TAGINT,world);
   MPI_Allgatherv(local_edge_tags.data(),2*nedge,MPI_LMP_TAGINT,global_edge_tags.data(),edge_counts2.data(),edge_offsets2.data(),MPI_LMP_TAGINT,world);
   MPI_Allgatherv(local_edge_r.data(),nedge,MPI_DOUBLE,global_edge_r.data(),edge_counts.data(),edge_offsets.data(),MPI_DOUBLE,world);
+  if (timing) { timing_stage[1] += MPI_Wtime()-start; start=MPI_Wtime(); }
   StickerStates states;
   for (int i=0;i<total_states;++i) {
     tagint tag=global_states[3*i];
@@ -156,12 +168,42 @@ void FixAssociatingKinetics::end_of_step()
     if (other==states.end() || other->second.partner!=state.first)
       error->all(FLERR,"Associating partner state is not reciprocal");
   }
+  if (timing) { timing_stage[2] += MPI_Wtime()-start; start=MPI_Wtime(); }
   process_sweep(states,edges,update->ntimestep);
+  if (timing) { timing_stage[3] += MPI_Wtime()-start; start=MPI_Wtime(); }
   for (int i=0;i<atom->nlocal;++i) {
     auto state=states.find(atom->tag[i]);
     if (state!=states.end()) partner[i]=state->second.partner;
   }
   comm->forward_comm(this);
+  if (timing) {
+    timing_stage[4] += MPI_Wtime()-start;
+    bigint active=0;
+    for (const auto &state : states) if (state.second.partner && state.first<state.second.partner) ++active;
+    ++timing_sweeps; timing_edges_sum+=static_cast<bigint>(edges.size()); timing_active_sum+=active;
+    if (timing_sweeps==1) {
+      timing_stickers=static_cast<bigint>(states.size());
+      timing_edges_min=timing_edges_max=static_cast<bigint>(edges.size());
+      timing_active_min=timing_active_max=active;
+    } else {
+      timing_edges_min=std::min(timing_edges_min,static_cast<bigint>(edges.size()));
+      timing_edges_max=std::max(timing_edges_max,static_cast<bigint>(edges.size()));
+      timing_active_min=std::min(timing_active_min,active);
+      timing_active_max=std::max(timing_active_max,active);
+    }
+  }
+}
+void FixAssociatingKinetics::post_run()
+{
+  if (!timing || !timing_sweeps) return;
+  double critical[5], local_total=0.0, critical_total;
+  for (int i=0;i<5;++i) local_total+=timing_stage[i];
+  MPI_Reduce(timing_stage,critical,5,MPI_DOUBLE,MPI_MAX,0,world);
+  MPI_Reduce(&local_total,&critical_total,1,MPI_DOUBLE,MPI_MAX,0,world);
+  if (comm->me == 0) {
+    utils::logmesg(lmp,"ASSOCIATING_TIMING sweeps={} atoms={} stickers={} candidates_mean={:.6f} candidates_min={} candidates_max={} active_mean={:.6f} active_min={} active_max={} accepted_creations={} accepted_breaks={}\n",timing_sweeps,atom->natoms,timing_stickers,timing_edges_sum/static_cast<double>(timing_sweeps),timing_edges_min,timing_edges_max,timing_active_sum/static_cast<double>(timing_sweeps),timing_active_min,timing_active_max,created-timing_created0,broken-timing_broken0);
+    utils::logmesg(lmp,"ASSOCIATING_TIMING_SECONDS extraction={:.9f} allgather={:.9f} reconstruction={:.9f} process_sweep={:.9f} writeback_forward={:.9f} total={:.9f}\n",critical[0],critical[1],critical[2],critical[3],critical[4],critical_total);
+  }
 }
 double FixAssociatingKinetics::compute_vector(int n) {
   if(n==1) return created; if(n==2) return broken;

@@ -71,3 +71,4 @@ src/Makefile.package.settings-e
 /CLAUDE.local.md
 /.claude/settings.local.json
 /.claude/scheduled_tasks.lock
+bench/associating/javier_star_A4_N10_rho08/javier_b24_warmup.restart
