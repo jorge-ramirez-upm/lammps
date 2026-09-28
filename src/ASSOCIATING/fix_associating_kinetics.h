@@ -7,9 +7,11 @@ FixStyle(associating/kinetics,FixAssociatingKinetics);
 #ifndef LMP_FIX_ASSOCIATING_KINETICS_H
 #define LMP_FIX_ASSOCIATING_KINETICS_H
 #include "fix.h"
+#include <vector>
 namespace LAMMPS_NS {
 class FixAssociatingKinetics : public Fix {
  public:
+  struct Event { tagint first, second, molecule_first, molecule_second; int creation; };
   FixAssociatingKinetics(class LAMMPS *, int, char **);
   ~FixAssociatingKinetics() override;
   int setmask() override;
@@ -32,6 +34,7 @@ class FixAssociatingKinetics : public Fix {
   double memory_usage() override;
   double compute_vector(int) override;
   tagint *partners() const { return partner; }
+  const std::vector<Event> &events() const { return accepted_events; }
  private:
   tagint *partner;
   tagint first, second;
@@ -39,6 +42,7 @@ class FixAssociatingKinetics : public Fix {
   int kinetics;
   double nu0, ea, temperature, r_assoc;
   bigint created, broken;
+  std::vector<Event> accepted_events;
   class NeighList *list;
   int nmax_old;
   void initialize_debug_pair();

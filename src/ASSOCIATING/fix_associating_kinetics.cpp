@@ -76,10 +76,17 @@ void FixAssociatingKinetics::end_of_step()
   auto *pair=dynamic_cast<PairAssociating *>(force->pair); double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
   for(auto &e:edges) { tagint pi=partner[e.i],pj=partner[e.j]; bool make=!pi&&!pj, cut=pi==atom->tag[e.j]&&pj==atom->tag[e.i]; if(!make&&!cut) continue;
     double dx=atom->x[e.i][0]-atom->x[e.j][0],dy=atom->x[e.i][1]-atom->x[e.j][1],dz=atom->x[e.i][2]-atom->x[e.j][2]; domain->minimum_image(FLERR,dx,dy,dz); double du=pair->delta_u(std::sqrt(dx*dx+dy*dy+dz*dz)); double a=make?std::min(1.0,std::exp(-du/temperature)):std::min(1.0,std::exp(du/temperature));
-    if((ahash(e.p+0x517cc1b727220a95ULL)>>11)*0x1.0p-53 < q*a) { partner[e.i]=make?atom->tag[e.j]:0; partner[e.j]=make?atom->tag[e.i]:0; if(make)++created;else++broken; }}
+    if((ahash(e.p+0x517cc1b727220a95ULL)>>11)*0x1.0p-53 < q*a) {
+      tagint ti=atom->tag[e.i], tj=atom->tag[e.j], mi=atom->molecule ? atom->molecule[e.i] : 0, mj=atom->molecule ? atom->molecule[e.j] : 0;
+      if(tj<ti) { std::swap(ti,tj); std::swap(mi,mj); }
+      accepted_events.push_back({ti,tj,mi,mj,make});
+      partner[e.i]=make?atom->tag[e.j]:0; partner[e.j]=make?atom->tag[e.i]:0; if(make)++created;else++broken; }}
   comm->forward_comm(this);
 }
-double FixAssociatingKinetics::compute_vector(int n) { return n==0 ? created-broken : n==1 ? created : broken; }
+double FixAssociatingKinetics::compute_vector(int n) {
+  if(n==1) return created; if(n==2) return broken;
+  bigint count=0; for(int i=0;i<atom->nlocal;++i) if(partner[i] && atom->tag[i]<partner[i]) ++count; return count;
+}
 void FixAssociatingKinetics::initialize_debug_pair()
 {
   int found = 0;

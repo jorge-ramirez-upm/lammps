@@ -114,6 +114,12 @@ For a fixed edge and fixed coordinates, the state-independent edge selection and
 
 ## Minimal file boundary and future Kokkos path
 
+The kinetic fix retains the current active-bond count, cumulative accepted
+creation/break counts, and canonical accepted-event endpoint tags plus molecule
+IDs in memory.  A future local bond-list/output interface may expose
+instantaneous connectivity, and an optional buffered event log may expose
+creation/break history.  B1 performs no per-event disk I/O.
+
 Add only these new files:
 
 | File | Role |
