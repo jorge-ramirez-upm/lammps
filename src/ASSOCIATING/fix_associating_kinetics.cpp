@@ -40,7 +40,7 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
   size_peratom_cols = 0;
   peratom_freq = 1;
   restart_peratom = 1;
-  vector_flag=1; size_vector=3; global_freq=1;
+  vector_flag=1; size_vector=3; global_freq=1; extvector=0;
   comm_border = 1;
   comm_forward = 1;
   grow_arrays(atom->nmax);
@@ -68,6 +68,7 @@ static unsigned long long ahash(unsigned long long x) { x+=0x9e3779b97f4a7c15ULL
 void FixAssociatingKinetics::end_of_step()
 {
   if (update->ntimestep % nevery || !list) return;
+  neighbor->build_one(list);
   struct Edge { int i,j; unsigned long long p; }; std::vector<Edge> edges;
   for(int ii=0;ii<list->inum;++ii) { int i=list->ilist[ii]; if(!(atom->mask[i]&groupbit)) continue; int *n=list->firstneigh[i];
     for(int jj=0;jj<list->numneigh[i];++jj) { int j=n[jj]&NEIGHMASK; if(!(atom->mask[j]&groupbit)||((n[jj]>>SBBITS)&3)==1) continue; if(atom->tag[i]>=atom->tag[j]) continue;
