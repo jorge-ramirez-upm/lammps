@@ -81,12 +81,13 @@ void FixAssociatingKinetics::end_of_step()
   struct Edge { int i,j; uint64_t p; }; std::vector<Edge> edges;
   for(int ii=0;ii<list->inum;++ii) { int i=list->ilist[ii]; if(!(atom->mask[i]&groupbit)) continue; int *n=list->firstneigh[i];
     for(int jj=0;jj<list->numneigh[i];++jj) { int j=n[jj]&NEIGHMASK; if(!(atom->mask[j]&groupbit)||((n[jj]>>SBBITS)&3)==1) continue; if(atom->tag[i]>=atom->tag[j]) continue;
-      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); if(dx*dx+dy*dy+dz*dz<r_assoc*r_assoc) { uint64_t ti=static_cast<uint64_t>(atom->tag[i]),tj=static_cast<uint64_t>(atom->tag[j]); edges.push_back({i,j,ahash(static_cast<uint64_t>(seed)^static_cast<uint64_t>(update->ntimestep)^ti^(tj<<1))}); } }}
+      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); if(dx*dx+dy*dy+dz*dz<r_assoc*r_assoc) { uint64_t ti=static_cast<uint64_t>(atom->tag[i]),tj=static_cast<uint64_t>(atom->tag[j]); uint64_t key=static_cast<uint64_t>(seed)^static_cast<uint64_t>(update->ntimestep)^(ti<<1)^(tj<<17); edges.push_back({i,j,ahash(key^UINT64_C(0x4f52444552))}); } }}
   std::sort(edges.begin(),edges.end(),[](const Edge&a,const Edge&b){return a.p<b.p;});
   double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
   for(auto &e:edges) { tagint pi=partner[e.i],pj=partner[e.j]; bool make=!pi&&!pj, cut=pi==atom->tag[e.j]&&pj==atom->tag[e.i]; if(!make&&!cut) continue;
     double dx=atom->x[e.i][0]-atom->x[e.j][0],dy=atom->x[e.i][1]-atom->x[e.j][1],dz=atom->x[e.i][2]-atom->x[e.j][2]; domain->minimum_image(FLERR,dx,dy,dz); double du=pair->delta_u(std::sqrt(dx*dx+dy*dy+dz*dz)); double a=make?std::min(1.0,std::exp(-du/temperature)):std::min(1.0,std::exp(du/temperature));
-    if((ahash(e.p+0x517cc1b727220a95ULL)>>11)*0x1.0p-53 < q*a) {
+    uint64_t ti=static_cast<uint64_t>(atom->tag[e.i]), tj=static_cast<uint64_t>(atom->tag[e.j]); uint64_t key=static_cast<uint64_t>(seed)^static_cast<uint64_t>(update->ntimestep)^(ti<<1)^(tj<<17);
+    if((ahash(key^UINT64_C(0x414343455054))>>11)*0x1.0p-53 < q*a) {
       tagint ti=atom->tag[e.i], tj=atom->tag[e.j], mi=atom->molecule ? atom->molecule[e.i] : 0, mj=atom->molecule ? atom->molecule[e.j] : 0;
       if(tj<ti) { std::swap(ti,tj); std::swap(mi,mj); }
       accepted_events.push_back({ti,tj,mi,mj,make});
