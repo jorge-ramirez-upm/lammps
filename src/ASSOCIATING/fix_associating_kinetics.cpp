@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <set>
 #include <unordered_map>
 #include <vector>
 using namespace LAMMPS_NS;
@@ -66,7 +67,6 @@ FixAssociatingKinetics::~FixAssociatingKinetics()
 int FixAssociatingKinetics::setmask() { return kinetics ? END_OF_STEP : 0; }
 void FixAssociatingKinetics::init()
 {
-  if (kinetics && comm->nprocs != 1) error->all(FLERR,"Fix associating/kinetics B1 supports one MPI rank only");
   pair=dynamic_cast<PairAssociating *>(force->pair_match("associating",1));
   if (!pair) error->all(FLERR,"Fix associating/kinetics requires pair associating");
   if (kinetics && r_assoc >= pair->r0_value())
@@ -110,13 +110,51 @@ void FixAssociatingKinetics::end_of_step()
   if (update->ntimestep % nevery || !list) return;
   accepted_events.clear();
   neighbor->build_one(list);
-  StickerStates states;
+  std::vector<tagint> local_states;
   for (int i=0;i<atom->nlocal;++i)
-    if (atom->mask[i]&groupbit) states.emplace(atom->tag[i],StickerState{partner[i],atom->molecule ? atom->molecule[i] : 0});
-  std::vector<StickerEdge> edges;
+    if (atom->mask[i]&groupbit) {
+      local_states.push_back(atom->tag[i]); local_states.push_back(partner[i]);
+      local_states.push_back(atom->molecule ? atom->molecule[i] : 0);
+    }
+  std::vector<tagint> local_edge_tags;
+  std::vector<double> local_edge_r;
   for(int ii=0;ii<list->inum;++ii) { int i=list->ilist[ii]; if(!(atom->mask[i]&groupbit)) continue; int *n=list->firstneigh[i];
     for(int jj=0;jj<list->numneigh[i];++jj) { int j=n[jj]&NEIGHMASK; if(!(atom->mask[j]&groupbit)||((n[jj]>>SBBITS)&3)==1) continue; if(atom->tag[i]>=atom->tag[j]) continue;
-      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); double rsq=dx*dx+dy*dy+dz*dz; if(rsq<r_assoc*r_assoc) edges.push_back({atom->tag[i],atom->tag[j],std::sqrt(rsq)}); }}
+      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); double rsq=dx*dx+dy*dy+dz*dz; if(rsq<r_assoc*r_assoc) { local_edge_tags.push_back(atom->tag[i]); local_edge_tags.push_back(atom->tag[j]); local_edge_r.push_back(std::sqrt(rsq)); } }}
+  int nstate=local_states.size()/3, nedge=local_edge_r.size();
+  std::vector<int> state_counts(comm->nprocs), edge_counts(comm->nprocs), state_offsets(comm->nprocs), edge_offsets(comm->nprocs);
+  MPI_Allgather(&nstate,1,MPI_INT,state_counts.data(),1,MPI_INT,world);
+  MPI_Allgather(&nedge,1,MPI_INT,edge_counts.data(),1,MPI_INT,world);
+  int total_states=0,total_edges=0;
+  for (int i=0;i<comm->nprocs;++i) { state_offsets[i]=total_states; edge_offsets[i]=total_edges; total_states+=state_counts[i]; total_edges+=edge_counts[i]; }
+  std::vector<int> state_counts3(comm->nprocs),state_offsets3(comm->nprocs),edge_counts2(comm->nprocs),edge_offsets2(comm->nprocs);
+  for (int i=0;i<comm->nprocs;++i) { state_counts3[i]=3*state_counts[i]; state_offsets3[i]=3*state_offsets[i]; edge_counts2[i]=2*edge_counts[i]; edge_offsets2[i]=2*edge_offsets[i]; }
+  std::vector<tagint> global_states(3*total_states),global_edge_tags(2*total_edges);
+  std::vector<double> global_edge_r(total_edges);
+  MPI_Allgatherv(local_states.data(),3*nstate,MPI_LMP_TAGINT,global_states.data(),state_counts3.data(),state_offsets3.data(),MPI_LMP_TAGINT,world);
+  MPI_Allgatherv(local_edge_tags.data(),2*nedge,MPI_LMP_TAGINT,global_edge_tags.data(),edge_counts2.data(),edge_offsets2.data(),MPI_LMP_TAGINT,world);
+  MPI_Allgatherv(local_edge_r.data(),nedge,MPI_DOUBLE,global_edge_r.data(),edge_counts.data(),edge_offsets.data(),MPI_DOUBLE,world);
+  StickerStates states;
+  for (int i=0;i<total_states;++i) {
+    tagint tag=global_states[3*i];
+    if (!states.emplace(tag,StickerState{global_states[3*i+1],global_states[3*i+2]}).second)
+      error->all(FLERR,"Associating duplicate global sticker tag");
+  }
+  std::vector<StickerEdge> edges;
+  std::set<std::pair<tagint,tagint>> unique_edges;
+  for (int i=0;i<total_edges;++i) {
+    tagint first=global_edge_tags[2*i],second=global_edge_tags[2*i+1];
+    if (first>=second || !unique_edges.emplace(first,second).second)
+      error->all(FLERR,"Associating invalid duplicate global edge");
+    if (states.find(first)==states.end() || states.find(second)==states.end())
+      error->all(FLERR,"Associating edge endpoint is not a sticker");
+    edges.push_back({first,second,global_edge_r[i]});
+  }
+  for (const auto &state : states) if (state.second.partner) {
+    auto other=states.find(state.second.partner);
+    if (other==states.end() || other->second.partner!=state.first)
+      error->all(FLERR,"Associating partner state is not reciprocal");
+  }
   process_sweep(states,edges,update->ntimestep);
   for (int i=0;i<atom->nlocal;++i) {
     auto state=states.find(atom->tag[i]);
@@ -126,7 +164,8 @@ void FixAssociatingKinetics::end_of_step()
 }
 double FixAssociatingKinetics::compute_vector(int n) {
   if(n==1) return created; if(n==2) return broken;
-  bigint count=0; for(int i=0;i<atom->nlocal;++i) if(partner[i] && atom->tag[i]<partner[i]) ++count; return count;
+  bigint local=0,count=0; for(int i=0;i<atom->nlocal;++i) if(partner[i] && atom->tag[i]<partner[i]) ++local;
+  MPI_Allreduce(&local,&count,1,MPI_LMP_BIGINT,MPI_SUM,world); return count;
 }
 void FixAssociatingKinetics::initialize_debug_pair()
 {

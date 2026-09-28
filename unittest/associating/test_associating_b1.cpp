@@ -6,6 +6,7 @@
 #include "lammps.h"
 #include "modify.h"
 #include "gtest/gtest.h"
+#include <mpi.h>
 #include <cmath>
 #include <array>
 #include <cstdio>
@@ -129,4 +130,24 @@ TEST_F(AssociatingB1, StretchedBondIsChemicallyFrozen)
   auto *p=k->partners();
   EXPECT_EQ(p[0],2); EXPECT_EQ(p[1],1); EXPECT_TRUE(k->events().empty());
   EXPECT_NEAR(lmp->atom->f[0][0],30.0*1.3/(1.0-1.3*1.3/(1.5*1.5)),1e-10);
+}
+
+TEST_F(AssociatingB1, ReplicatedMPISmoke)
+{
+  int nprocs;
+  MPI_Comm_size(MPI_COMM_WORLD,&nprocs);
+  if (nprocs != 2) GTEST_SKIP() << "requires two MPI ranks";
+  cmd("units lj"); cmd("atom_style atomic"); cmd("atom_modify map yes"); cmd("processors 2 1 1"); cmd("region b block 0 10 0 10 0 10"); cmd("create_box 1 b");
+  cmd("create_atoms 1 single 4.5 5 5"); cmd("create_atoms 1 single 5.5 5 5"); cmd("mass 1 1"); cmd("pair_style associating"); cmd("pair_coeff * * 30 1.5 100"); cmd("fix k all associating/kinetics 1 19 1e9 0 1 1.2"); cmd("fix hold all move linear 0 0 0");
+  auto *k=dynamic_cast<FixAssociatingKinetics *>(lmp->modify->get_fix_by_id("k"));
+  cmd("run 1");
+  ASSERT_EQ(k->events().size(),1u); EXPECT_EQ(k->events()[0].creation,1);
+  auto *p=k->partners(); int local_reciprocal=0;
+  for (int i=0;i<lmp->atom->nlocal;++i) if (p[i] && p[i]==3-lmp->atom->tag[i]) ++local_reciprocal;
+  int reciprocal=0; MPI_Allreduce(&local_reciprocal,&reciprocal,1,MPI_INT,MPI_SUM,MPI_COMM_WORLD);
+  EXPECT_EQ(reciprocal,2); EXPECT_EQ(k->compute_vector(0),1);
+  cmd("run 1");
+  double local_force=0.0; for (int i=0;i<lmp->atom->nlocal;++i) local_force=std::max(local_force,std::abs(lmp->atom->f[i][0]));
+  double force=0.0; MPI_Allreduce(&local_force,&force,1,MPI_DOUBLE,MPI_MAX,MPI_COMM_WORLD);
+  EXPECT_NEAR(force,30.0/(1.0-1.0/(1.5*1.5)),1e-10);
 }
