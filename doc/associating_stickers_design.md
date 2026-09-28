@@ -72,24 +72,24 @@ Within `r < r_assoc`, local detailed balance for a local chemical update require
 P_c(r)/P_b(r) = exp[-Delta_U(r)/T].
 ```
 
-The first model is a **discrete-time equilibrium-preserving kernel**, with explicit LJ-unit temperature `T` and attempt frequency `nu`.  For every eligible local update it uses one common attempt probability and conditional Metropolis acceptances:
+The first model is a **discrete-time equilibrium-preserving kernel**, with explicit LJ-unit temperature `T`, prefactor `nu0`, and activation energy `Ea`.  For every eligible local update it uses one common attempt probability and conditional Metropolis acceptances:
 
 ```
-q    = 1 - exp(-nu * Nevery * dt)
+q    = 1 - exp[-nu0 * exp(-Ea/T) * Nevery * dt]
 A_c  = min(1, exp[-Delta_U(r)/T])
 A_b  = min(1, exp[ Delta_U(r)/T])
 P_c  = q * A_c
 P_b  = q * A_b.
 ```
 
-The common factor gives `P_c/P_b = exp[-Delta_U/T]` exactly at finite timestep.  Do not independently convert continuous rates with `1-exp(-k*Nevery*dt)`; that changes this ratio.  `T` is an input, never an instantaneous kinetic temperature.
+The common factor gives `P_c/P_b = exp[-Delta_U/T]` exactly at finite timestep.  `Ea` changes kinetics without changing equilibrium.  Do not independently convert continuous rates with `1-exp(-k*Nevery*dt)`; that changes this ratio.  `T` is an input, never an instantaneous kinetic temperature.
 
 At `r >= r_assoc`, both chemical transition probabilities are zero.  A bound pair can stretch outside the reaction domain, retain its FENE force, and dissociate only after returning: this is gated equilibrium kinetics, not forced rupture.  A future continuous-time stochastic simulation algorithm (SSA) may define continuous propensities and event times, but it is a distinct algorithm and must not be described as this discrete-time kernel.
 
 Suggested syntax:
 
 ```
-fix ID sticker-group associating/kinetics Nevery seed nu T r_assoc
+fix ID sticker-group associating/kinetics Nevery seed nu0 Ea T r_assoc
 pair_style associating R0
 pair_coeff * * K R0 E_e
 ```
@@ -100,9 +100,9 @@ The pair owns `K`, `R0`, `E_e`, `r_star`, and `Delta_U(r)`; the fix queries it r
 
 `fix associating/kinetics` owns `tagint partner[nmax]` and implements grow/copy/set, border, exchange, and restart callbacks.  It packs tag IDs through `ubuf`.  After a state change it calls `comm->forward_comm(this)`, keeping ghosts current without a neighbor rebuild.
 
-The fix requests an occasional full list with fixed cutoff `r_assoc` for geometrically eligible chemical updates.  It also maintains a partner-addressed communication cache.  Before every force evaluation, each owner of a bound sticker receives its partner's current wrapped position and image information by explicit owner-to-owner communication keyed by `partner[i]`; after migration, the fix rebuilds the tag-to-owner directory before the next force evaluation.  This cache is independent of spatial ghosts and neighbor-list cutoffs.
+The fix requests an occasional full list with fixed cutoff `r_assoc` for geometrically eligible chemical updates.  Mechanics uses the normal LAMMPS ghost halo: `pair associating` advertises cutoff `R0`, so a valid bound partner with `r < R0` is present after regular border communication.  The per-atom partner ID is border- and forward-communicated and migrates with its owner.  A reciprocal partner that cannot be mapped remains an explicit error.
 
-`pair associating` loops reciprocal partners through that cache, not through a pair list with cutoff `R0`.  If partners share an owner rank, it applies both forces once.  If they are on different ranks, each owner computes the same minimum-image displacement, applies its own endpoint force, and only the canonical lower-tag owner tallies energy and virial.  This guarantees that every existing pair remains accessible and that `r >= R0` produces a FENE error instead of silently disappearing because it left a list.  It must not use `special_lj` to scale the transient force and initially rejects rRESPA inner/middle use.
+`pair associating` loops local reciprocal partners through the halo, applying each local endpoint force.  Its full-pair energy/virial tally assigns half the pair contribution per endpoint, including per-atom tallies.  This preserves the FENE error at `r >= R0` while the pair remains in the `R0` halo.  It must not use `special_lj` to scale the transient force and initially rejects rRESPA inner/middle use.
 
 The earlier mutual-nomination scheme is removed: in a crowded melt its formation probability depends on competing candidates while its reverse move does not, so it violates detailed balance.  The CPU reference uses a serial random-scan Metropolis sweep over a **state-independent** set of geometrically eligible unordered pairs:
 
@@ -110,7 +110,7 @@ The earlier mutual-nomination scheme is removed: in a crowded melt its formation
 2. Process the reproducible permutation keyed by seed, timestep, and pair IDs.  Immediately before each update, re-evaluate its current state: free--free proposes formation, a reciprocal pair proposes breakage, and every other state is a no-op.
 3. Use `P_c=q*A_c` or `P_b=q*A_b`.  On acceptance update both owners transactionally, then refresh affected partner state before processing a conflicting pair.
 
-For a fixed edge and fixed coordinates, the state-independent edge selection and common `q` make its two-state Metropolis update obey the stated finite-step detailed-balance ratio.  Monovalency is preserved because each update rechecks current endpoints.  Associated pairs outside `r_assoc` are absent from this chemical sweep and are chemically frozen, while the partner-addressed mechanical path continues their FENE force and range check.  The scheduler may require explicit MPI owner-to-owner state updates; writing a ghost is not sufficient.  A parallel coloring/event scheduler is future work only after it reproduces the reference kernel's stationary distribution and finite-step transition probabilities.
+For a fixed edge and fixed coordinates, the state-independent edge selection and common `q` make its two-state Metropolis update obey the stated finite-step detailed-balance ratio.  Monovalency is preserved because each update rechecks current endpoints.  Associated pairs outside `r_assoc` are absent from this chemical sweep and are chemically frozen, while the halo mechanical path continues their FENE force and range check.  The scheduler may require explicit MPI owner-to-owner state updates; writing a ghost is not sufficient.  A parallel coloring/event scheduler is future work only after it reproduces the reference kernel's stationary distribution and finite-step transition probabilities.
 
 ## Minimal file boundary and future Kokkos path
 
@@ -118,11 +118,11 @@ Add only these new files:
 
 | File | Role |
 | --- | --- |
-| `src/ASSOCIATING/fix_associating_kinetics.h/.cpp` | State, state-independent sweep, owner-to-owner transactions, migration/restart, and partner-addressed coordinate cache. |
-| `src/ASSOCIATING/pair_associating.h/.cpp` | Shifted log-FENE force, `Delta_U`, `r_star`, and partner-cache force evaluation. |
+| `src/ASSOCIATING/fix_associating_kinetics.h/.cpp` | State, state-independent sweep, migration, and restart. |
+| `src/ASSOCIATING/pair_associating.h/.cpp` | Shifted log-FENE force, `Delta_U`, `r_star`, and halo-based force evaluation. |
 | `src/KOKKOS/pair_associating_kokkos.h/.cpp` | Future CUDA/Kokkos force implementation. |
 
-No core LAMMPS source changes are required.  The Kokkos pair derives from the CPU pair plus `KokkosBase`; the fix supplies `DualView` data for partner IDs and partner-addressed coordinates, synchronized from host kinetics and communication before device force calculation.  GPU kinetics is a separate future feature.
+No core LAMMPS source changes are required.  GPU kinetics is a separate future feature.
 
 ## Exact local reference sources
 
@@ -146,10 +146,10 @@ No core LAMMPS source changes are required.  The Kokkos pair derives from the CP
 5. Form below `r_assoc`, stretch to `r_assoc < r < R0`, and verify force and energy persist without rupture; require the FENE error at or beyond `R0`.
 6. At fixed separations and temperatures, verify the finite-step probabilities `P_c=q*A_c`, `P_b=q*A_b`, and their ratio `exp[-U_assoc/T]` for finite `Nevery*dt`; explicitly fail the independently exponentiated-rate construction.  For three stickers, compare serial-scheduler probabilities with explicit Boltzmann enumeration.
 7. In one sweep, begin with a free--free edge and change one endpoint through an earlier accepted edge; verify its later edge is re-evaluated and becomes a no-op.  Repeat with a pair that becomes reciprocal before its turn.  This proves the candidate set is geometric and state-independent.
-8. Form below `r_assoc`, then place partners at `r_assoc < r < R0` and at `r >= R0` while they are outside every spatial neighbor list.  Verify the partner cache retains the mechanical force in the first case and raises the FENE error in the second, including after MPI migration.
+8. Form below `r_assoc`, then place partners at `r_assoc < r < R0` and at `r >= R0` across an MPI domain boundary.  Verify the normal `R0` halo retains the mechanical force in the first case and raises the FENE error in the second, including after MPI migration.
 9. Test reciprocal monovalency, MPI migration, restart equivalence, and Newton pair on/off.
 10. Future: compare CPU and CUDA `/kk` forces, energy, virial, and per-atom energy with frozen kinetics, then after host updates and migration.
 
 ## Architectural concern before coding
 
-Exact detailed balance and melt-scale performance conflict here.  The serial state-independent random-scan reference is physically correct, but global ordering, owner-to-owner chemical transactions, and partner-addressed mechanical communication may be expensive.  Proceed with it only if it is acceptable for initial system sizes.  Otherwise, design and validate a parallel scheduler and partner-exchange optimization against its Boltzmann distribution and finite-step transition probabilities before implementing kinetics.
+Exact detailed balance and melt-scale performance conflict here.  The serial state-independent random-scan reference is physically correct, but global ordering and owner-to-owner chemical transactions may be expensive.  Proceed with it only if it is acceptable for initial system sizes.  Otherwise, design and validate a parallel scheduler against its Boltzmann distribution and finite-step transition probabilities before implementing kinetics.

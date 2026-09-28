@@ -15,7 +15,14 @@ def lmp(exe, deck, ranks=1):
 
 
 def value(out):
-    return float(next(x.split()[1] for x in out.splitlines() if len(x.split()) == 3 and x.split()[0] == "0"))
+    for line in out.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == "0":
+            try:
+                return float(fields[1])
+            except ValueError:
+                pass
+    raise AssertionError(out)
 
 
 def wca(r):
@@ -114,7 +121,37 @@ run 2
     assert "partner outside communication range" not in out.lower(), out
 
 
+def test_kg_topology(exe):
+    def deck(assoc):
+        return f"""units lj
+atom_style bond
+atom_modify map yes
+region b block 0 10 0 10 0 10
+create_box 1 b bond/types 1 extra/bond/per/atom 2
+create_atoms 1 single 4 5 5
+create_atoms 1 single 4.97 5 5
+create_atoms 1 single 4.9 5 5
+mass 1 1
+create_bonds single/bond 1 1 2
+create_bonds single/bond 1 2 3
+bond_style fene
+bond_coeff 1 30 1.5 1 1
+special_bonds fene
+pair_style hybrid/overlay lj/cut 1.122462048309373 associating
+pair_coeff * * lj/cut 1 1 1.122462048309373
+pair_coeff * * associating 30 1.5 1
+pair_modify shift yes
+{'fix a all associating/kinetics debug_pair 1 3' if assoc else 'fix a all associating/kinetics'}
+thermo_style custom step ebond
+thermo_modify norm no
+run 0
+"""
+    base, bound = value(lmp(exe, deck(False))), value(lmp(exe, deck(True)))
+    assert math.isclose(base, bound, rel_tol=1e-7), (base, bound)
+
+
 exe = sys.argv[1]
 test_wca(exe)
 test_restart(exe)
 test_migration(exe)
+test_kg_topology(exe)
