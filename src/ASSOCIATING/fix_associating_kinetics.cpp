@@ -14,12 +14,13 @@
 #include "utils.h"
 #include <cstring>
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
 FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), seed(0), kinetics(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), list(nullptr), nmax_old(0)
+    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), seed(0), kinetics(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), list(nullptr), pair(nullptr), nmax_old(0)
 {
   if (narg != 12 && narg != 9 && (narg != 3 && (narg != 6 || strcmp(arg[3],"debug_pair") != 0)))
     error->all(FLERR,"Illegal fix associating/kinetics command");
@@ -33,7 +34,7 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
     nevery=utils::inumeric(FLERR,arg[3],false,lmp); seed=utils::inumeric(FLERR,arg[4],false,lmp);
     nu0=utils::numeric(FLERR,arg[5],false,lmp); ea=utils::numeric(FLERR,arg[6],false,lmp);
     temperature=utils::numeric(FLERR,arg[7],false,lmp); r_assoc=utils::numeric(FLERR,arg[8],false,lmp);
-    if (nevery<=0 || seed<=0 || nu0<0 || temperature<=0 || r_assoc<=0) error->all(FLERR,"Illegal associating kinetics parameters");
+    if (nevery<=0 || seed<=0 || nu0<0 || ea<0 || temperature<=0 || r_assoc<=0) error->all(FLERR,"Illegal associating kinetics parameters");
     kinetics=1;
     if (narg == 12) {
       if (strcmp(arg[9],"debug_pair") != 0) error->all(FLERR,"Illegal fix associating/kinetics command");
@@ -64,22 +65,25 @@ int FixAssociatingKinetics::setmask() { return kinetics ? END_OF_STEP : 0; }
 void FixAssociatingKinetics::init()
 {
   if (kinetics && comm->nprocs != 1) error->all(FLERR,"Fix associating/kinetics B1 supports one MPI rank only");
+  pair=dynamic_cast<PairAssociating *>(force->pair_match("associating",1));
+  if (!pair) error->all(FLERR,"Fix associating/kinetics requires pair associating");
   if (kinetics) { auto *req=neighbor->add_request(this,NeighConst::REQ_FULL|NeighConst::REQ_OCCASIONAL); req->set_cutoff_fixed(r_assoc); }
   if (debug_pair) initialize_debug_pair();
   comm->forward_comm(this);
 }
 void FixAssociatingKinetics::init_list(int,NeighList *ptr) { list=ptr; }
-static unsigned long long ahash(unsigned long long x) { x+=0x9e3779b97f4a7c15ULL; x=(x^(x>>30))*0xbf58476d1ce4e5b9ULL; x=(x^(x>>27))*0x94d049bb133111ebULL; return x^(x>>31); }
+static uint64_t ahash(uint64_t x) { x+=UINT64_C(0x9e3779b97f4a7c15); x=(x^(x>>30))*UINT64_C(0xbf58476d1ce4e5b9); x=(x^(x>>27))*UINT64_C(0x94d049bb133111eb); return x^(x>>31); }
 void FixAssociatingKinetics::end_of_step()
 {
   if (update->ntimestep % nevery || !list) return;
+  accepted_events.clear();
   neighbor->build_one(list);
-  struct Edge { int i,j; unsigned long long p; }; std::vector<Edge> edges;
+  struct Edge { int i,j; uint64_t p; }; std::vector<Edge> edges;
   for(int ii=0;ii<list->inum;++ii) { int i=list->ilist[ii]; if(!(atom->mask[i]&groupbit)) continue; int *n=list->firstneigh[i];
     for(int jj=0;jj<list->numneigh[i];++jj) { int j=n[jj]&NEIGHMASK; if(!(atom->mask[j]&groupbit)||((n[jj]>>SBBITS)&3)==1) continue; if(atom->tag[i]>=atom->tag[j]) continue;
-      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); if(dx*dx+dy*dy+dz*dz<r_assoc*r_assoc) edges.push_back({i,j,ahash(seed^update->ntimestep^atom->tag[i]^(atom->tag[j]<<1))}); }}
+      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); if(dx*dx+dy*dy+dz*dz<r_assoc*r_assoc) { uint64_t ti=static_cast<uint64_t>(atom->tag[i]),tj=static_cast<uint64_t>(atom->tag[j]); edges.push_back({i,j,ahash(static_cast<uint64_t>(seed)^static_cast<uint64_t>(update->ntimestep)^ti^(tj<<1))}); } }}
   std::sort(edges.begin(),edges.end(),[](const Edge&a,const Edge&b){return a.p<b.p;});
-  auto *pair=dynamic_cast<PairAssociating *>(force->pair); double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
+  double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
   for(auto &e:edges) { tagint pi=partner[e.i],pj=partner[e.j]; bool make=!pi&&!pj, cut=pi==atom->tag[e.j]&&pj==atom->tag[e.i]; if(!make&&!cut) continue;
     double dx=atom->x[e.i][0]-atom->x[e.j][0],dy=atom->x[e.i][1]-atom->x[e.j][1],dz=atom->x[e.i][2]-atom->x[e.j][2]; domain->minimum_image(FLERR,dx,dy,dz); double du=pair->delta_u(std::sqrt(dx*dx+dy*dy+dz*dz)); double a=make?std::min(1.0,std::exp(-du/temperature)):std::min(1.0,std::exp(du/temperature));
     if((ahash(e.p+0x517cc1b727220a95ULL)>>11)*0x1.0p-53 < q*a) {

@@ -45,6 +45,7 @@ class FixAssociatingKinetics : public Fix {
   bigint created, broken;
   std::vector<Event> accepted_events;
   class NeighList *list;
+  class PairAssociating *pair;
   int nmax_old;
   void initialize_debug_pair();
 };
