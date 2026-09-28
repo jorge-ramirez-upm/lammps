@@ -205,6 +205,20 @@ void FixAssociatingKinetics::post_run()
     utils::logmesg(lmp,"ASSOCIATING_TIMING_SECONDS extraction={:.9f} allgather={:.9f} reconstruction={:.9f} process_sweep={:.9f} writeback_forward={:.9f} total={:.9f}\n",critical[0],critical[1],critical[2],critical[3],critical[4],critical_total);
   }
 }
+std::vector<FixAssociatingKinetics::NetworkEdge> FixAssociatingKinetics::active_network()
+{
+  comm->forward_comm(this);
+  std::vector<NetworkEdge> edges;
+  for (int i=0; i<atom->nlocal; ++i) {
+    if (!(atom->mask[i] & groupbit) || !partner[i] || atom->tag[i] > partner[i]) continue;
+    int j=atom->map(partner[i]);
+    if (j < 0) error->one(FLERR,"Associating partner is outside communication range");
+    if (!(atom->mask[j] & groupbit) || partner[j] != atom->tag[i])
+      error->one(FLERR,"Associating partner state is not reciprocal");
+    edges.push_back({atom->tag[i],partner[i],atom->molecule ? atom->molecule[i] : 0,atom->molecule ? atom->molecule[j] : 0});
+  }
+  return edges;
+}
 double FixAssociatingKinetics::compute_vector(int n) {
   if(n==1) return created; if(n==2) return broken;
   bigint local=0,count=0; for(int i=0;i<atom->nlocal;++i) if(partner[i] && atom->tag[i]<partner[i]) ++local;

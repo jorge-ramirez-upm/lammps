@@ -14,6 +14,7 @@ namespace LAMMPS_NS {
 class FixAssociatingKinetics : public Fix {
  public:
   struct Event { tagint first, second, molecule_first, molecule_second; int creation; };
+  struct NetworkEdge { tagint first, second, molecule_first, molecule_second; };
   FixAssociatingKinetics(class LAMMPS *, int, char **);
   ~FixAssociatingKinetics() override;
   int setmask() override;
@@ -40,6 +41,7 @@ class FixAssociatingKinetics : public Fix {
   double compute_vector(int) override;
   tagint *partners() const { return partner; }
   const std::vector<Event> &events() const { return accepted_events; }
+  std::vector<NetworkEdge> active_network();
  private:
   struct StickerState { tagint partner, molecule; };
   struct StickerEdge { tagint first, second; double r; };
