@@ -44,6 +44,7 @@ void PairAssociating::allocate()
 void PairAssociating::init_style()
 {
   if (!coeff_set) error->all(FLERR,"All pair coefficients are not set");
+  fix=nullptr;
   for (int i=0;i<modify->nfix;++i) {
     auto *candidate=dynamic_cast<FixAssociatingKinetics *>(modify->fix[i]);
     if (candidate) { if (fix) error->all(FLERR,"Only one fix associating/kinetics is allowed"); fix=candidate; }

@@ -32,6 +32,7 @@ class FixAssociatingKinetics : public Fix {
  private:
   tagint *partner;
   tagint first, second;
+  int debug_pair;
   int nmax_old;
   void initialize_debug_pair();
 };

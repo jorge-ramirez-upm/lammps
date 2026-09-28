@@ -8,14 +8,17 @@
 using namespace LAMMPS_NS;
 
 FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), nmax_old(0)
+    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), nmax_old(0)
 {
-  if (narg != 6 || strcmp(arg[3],"pair") != 0)
+  if (narg != 3 && (narg != 6 || strcmp(arg[3],"debug_pair") != 0))
     error->all(FLERR,"Illegal fix associating/kinetics command");
-  first = utils::tnumeric(FLERR,arg[4],false,lmp);
-  second = utils::tnumeric(FLERR,arg[5],false,lmp);
-  if (first <= 0 || second <= 0 || first == second)
-    error->all(FLERR,"Invalid debug association pair");
+  if (narg == 6) {
+    first = utils::tnumeric(FLERR,arg[4],false,lmp);
+    second = utils::tnumeric(FLERR,arg[5],false,lmp);
+    if (first <= 0 || second <= 0 || first == second)
+      error->all(FLERR,"Invalid debug association pair");
+    debug_pair = 1;
+  }
   peratom_flag = 1;
   size_peratom_cols = 0;
   peratom_freq = 1;
@@ -37,7 +40,7 @@ FixAssociatingKinetics::~FixAssociatingKinetics()
 int FixAssociatingKinetics::setmask() { return 0; }
 void FixAssociatingKinetics::init()
 {
-  initialize_debug_pair();
+  if (debug_pair) initialize_debug_pair();
   comm->forward_comm(this);
 }
 void FixAssociatingKinetics::initialize_debug_pair()

@@ -20,7 +20,7 @@ create_atoms 1 single {4.3 + distance} 5 5
 mass 1 1
 pair_style associating
 pair_coeff * * 30 1.5 1
-fix a all associating/kinetics pair 1 2
+fix a all associating/kinetics debug_pair 1 2
 neighbor 0.3 bin
 neigh_modify every 1 delay 0 check no
 compute fmax all reduce max fx
