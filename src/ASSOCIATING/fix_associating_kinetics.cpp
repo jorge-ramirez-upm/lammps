@@ -19,9 +19,9 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 
 FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), kinetics(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), list(nullptr), nmax_old(0)
+    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), seed(0), kinetics(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), list(nullptr), nmax_old(0)
 {
-  if (narg != 9 && (narg != 3 && (narg != 6 || strcmp(arg[3],"debug_pair") != 0)))
+  if (narg != 12 && narg != 9 && (narg != 3 && (narg != 6 || strcmp(arg[3],"debug_pair") != 0)))
     error->all(FLERR,"Illegal fix associating/kinetics command");
   if (narg == 6) {
     first = utils::tnumeric(FLERR,arg[4],false,lmp);
@@ -29,12 +29,17 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
     if (first <= 0 || second <= 0 || first == second)
       error->all(FLERR,"Invalid debug association pair");
     debug_pair = 1;
-  } else if (narg == 9) {
-    nevery=utils::inumeric(FLERR,arg[3],false,lmp); int seed=utils::inumeric(FLERR,arg[4],false,lmp);
+  } else if (narg == 9 || narg == 12) {
+    nevery=utils::inumeric(FLERR,arg[3],false,lmp); seed=utils::inumeric(FLERR,arg[4],false,lmp);
     nu0=utils::numeric(FLERR,arg[5],false,lmp); ea=utils::numeric(FLERR,arg[6],false,lmp);
     temperature=utils::numeric(FLERR,arg[7],false,lmp); r_assoc=utils::numeric(FLERR,arg[8],false,lmp);
     if (nevery<=0 || seed<=0 || nu0<0 || temperature<=0 || r_assoc<=0) error->all(FLERR,"Illegal associating kinetics parameters");
-    first=seed; kinetics=1;
+    kinetics=1;
+    if (narg == 12) {
+      if (strcmp(arg[9],"debug_pair") != 0) error->all(FLERR,"Illegal fix associating/kinetics command");
+      first=utils::tnumeric(FLERR,arg[10],false,lmp); second=utils::tnumeric(FLERR,arg[11],false,lmp);
+      if(first<=0 || second<=0 || first==second) error->all(FLERR,"Invalid debug association pair"); debug_pair=1;
+    }
   }
   peratom_flag = 1;
   size_peratom_cols = 0;
@@ -72,7 +77,7 @@ void FixAssociatingKinetics::end_of_step()
   struct Edge { int i,j; unsigned long long p; }; std::vector<Edge> edges;
   for(int ii=0;ii<list->inum;++ii) { int i=list->ilist[ii]; if(!(atom->mask[i]&groupbit)) continue; int *n=list->firstneigh[i];
     for(int jj=0;jj<list->numneigh[i];++jj) { int j=n[jj]&NEIGHMASK; if(!(atom->mask[j]&groupbit)||((n[jj]>>SBBITS)&3)==1) continue; if(atom->tag[i]>=atom->tag[j]) continue;
-      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); if(dx*dx+dy*dy+dz*dz<r_assoc*r_assoc) edges.push_back({i,j,ahash(first^update->ntimestep^atom->tag[i]^(atom->tag[j]<<1))}); }}
+      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); if(dx*dx+dy*dy+dz*dz<r_assoc*r_assoc) edges.push_back({i,j,ahash(seed^update->ntimestep^atom->tag[i]^(atom->tag[j]<<1))}); }}
   std::sort(edges.begin(),edges.end(),[](const Edge&a,const Edge&b){return a.p<b.p;});
   auto *pair=dynamic_cast<PairAssociating *>(force->pair); double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
   for(auto &e:edges) { tagint pi=partner[e.i],pj=partner[e.j]; bool make=!pi&&!pj, cut=pi==atom->tag[e.j]&&pj==atom->tag[e.i]; if(!make&&!cut) continue;

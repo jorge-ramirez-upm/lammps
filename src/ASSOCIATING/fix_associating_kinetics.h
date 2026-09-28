@@ -39,6 +39,7 @@ class FixAssociatingKinetics : public Fix {
   tagint *partner;
   tagint first, second;
   int debug_pair;
+  int seed;
   int kinetics;
   double nu0, ea, temperature, r_assoc;
   bigint created, broken;
