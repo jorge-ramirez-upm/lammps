@@ -14,6 +14,8 @@ class FixAssociatingKinetics : public Fix {
   ~FixAssociatingKinetics() override;
   int setmask() override;
   void init() override;
+  void init_list(int, class NeighList *) override;
+  void end_of_step() override;
   void grow_arrays(int) override;
   void copy_arrays(int, int, int) override;
   void set_arrays(int) override;
@@ -28,11 +30,16 @@ class FixAssociatingKinetics : public Fix {
   int maxsize_restart() override;
   int size_restart(int) override;
   double memory_usage() override;
+  double compute_vector(int) override;
   tagint *partners() const { return partner; }
  private:
   tagint *partner;
   tagint first, second;
   int debug_pair;
+  int kinetics;
+  double nu0, ea, temperature, r_assoc;
+  bigint created, broken;
+  class NeighList *list;
   int nmax_old;
   void initialize_debug_pair();
 };

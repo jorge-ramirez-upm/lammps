@@ -55,6 +55,7 @@ void PairAssociating::init_style()
 }
 double PairAssociating::init_one(int,int) { return r0; }
 double PairAssociating::fene(double r) const { return -0.5*k*r0*r0*std::log(1.0-r*r/(r0*r0)); }
+double PairAssociating::delta_u(double r) const { return fene(r)-shift-ee; }
 double PairAssociating::kg_derivative(double r) const
 { return -48.0/std::pow(r,13)+24.0/std::pow(r,7)+k*r/(1.0-r*r/(r0*r0)); }
 double PairAssociating::find_rstar() const
