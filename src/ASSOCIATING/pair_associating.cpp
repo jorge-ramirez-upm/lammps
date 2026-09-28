@@ -75,8 +75,7 @@ void PairAssociating::compute(int eflag,int vflag)
     double rsq=dx*dx+dy*dy+dz*dz, r=std::sqrt(rsq), arg=1.0-rsq/(r0*r0);
     if (arg <= 0.0) error->one(FLERR,"Associating FENE bond exceeded R0");
     double fbond=-k/arg; f[i][0]+=dx*fbond; f[i][1]+=dy*fbond; f[i][2]+=dz*fbond;
-    if (evflag && tag[i] < partner[i])
-      ev_tally(i,j,atom->nlocal,1,fene(r)-shift-ee,0.0,fbond,dx,dy,dz);
+    if (evflag) ev_tally_full(i,fene(r)-shift-ee,0.0,fbond,dx,dy,dz);
   }
   if (vflag_fdotr) virial_fdotr_compute();
 }
