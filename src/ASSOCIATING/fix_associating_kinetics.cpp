@@ -49,6 +49,7 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
   size_peratom_cols = 0;
   peratom_freq = 1;
   restart_peratom = 1;
+  restart_global = 1;
   vector_flag=1; size_vector=3; global_freq=1; extvector=0;
   comm_border = 1;
   comm_forward = 1;
@@ -207,4 +208,15 @@ void FixAssociatingKinetics::unpack_restart(int i,int nth)
 { int m=0; for(int k=0;k<nth;++k) m += static_cast<int>(atom->extra[i][m]); partner[i]=(tagint)ubuf(atom->extra[i][m+1]).i; }
 int FixAssociatingKinetics::maxsize_restart() { return 2; }
 int FixAssociatingKinetics::size_restart(int) { return 2; }
+void FixAssociatingKinetics::write_restart(FILE *fp)
+{
+  if (comm->me == 0) {
+    int size=2*sizeof(bigint); bigint state[2]={created,broken};
+    fwrite(&size,sizeof(int),1,fp); fwrite(state,sizeof(bigint),2,fp);
+  }
+}
+void FixAssociatingKinetics::restart(char *buf)
+{
+  auto *state=reinterpret_cast<bigint *>(buf); created=state[0]; broken=state[1];
+}
 double FixAssociatingKinetics::memory_usage() { return atom->nmax*sizeof(tagint); }

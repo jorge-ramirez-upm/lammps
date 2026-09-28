@@ -33,6 +33,8 @@ class FixAssociatingKinetics : public Fix {
   void unpack_restart(int, int) override;
   int maxsize_restart() override;
   int size_restart(int) override;
+  void write_restart(FILE *) override;
+  void restart(char *) override;
   double memory_usage() override;
   double compute_vector(int) override;
   tagint *partners() const { return partner; }
