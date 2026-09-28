@@ -18,6 +18,7 @@ class PairAssociating : public Pair {
   void init_style() override;
   double init_one(int, int) override;
   double delta_u(double) const;
+  double r0_value() const { return r0; }
  private:
   double k, r0, ee, rstar, shift;
   int coeff_set;

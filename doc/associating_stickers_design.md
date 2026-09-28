@@ -90,7 +90,7 @@ Suggested syntax:
 
 ```
 fix ID sticker-group associating/kinetics Nevery seed nu0 Ea T r_assoc
-pair_style associating R0
+pair_style associating
 pair_coeff * * K R0 E_e
 ```
 

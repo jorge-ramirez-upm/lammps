@@ -14,7 +14,9 @@
 #include "utils.h"
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -67,31 +69,59 @@ void FixAssociatingKinetics::init()
   if (kinetics && comm->nprocs != 1) error->all(FLERR,"Fix associating/kinetics B1 supports one MPI rank only");
   pair=dynamic_cast<PairAssociating *>(force->pair_match("associating",1));
   if (!pair) error->all(FLERR,"Fix associating/kinetics requires pair associating");
+  if (kinetics && r_assoc >= pair->r0_value())
+    error->all(FLERR,"Fix associating/kinetics r_assoc must be smaller than associating R0");
   if (kinetics) { auto *req=neighbor->add_request(this,NeighConst::REQ_FULL|NeighConst::REQ_OCCASIONAL); req->set_cutoff_fixed(r_assoc); }
   if (debug_pair) initialize_debug_pair();
   comm->forward_comm(this);
 }
 void FixAssociatingKinetics::init_list(int,NeighList *ptr) { list=ptr; }
 static uint64_t ahash(uint64_t x) { x+=UINT64_C(0x9e3779b97f4a7c15); x=(x^(x>>30))*UINT64_C(0xbf58476d1ce4e5b9); x=(x^(x>>27))*UINT64_C(0x94d049bb133111eb); return x^(x>>31); }
+uint64_t FixAssociatingKinetics::random_value(uint64_t seed, bigint timestep, tagint first, tagint second, uint64_t stream)
+{
+  uint64_t key=seed^static_cast<uint64_t>(timestep)^(static_cast<uint64_t>(first)<<1)^(static_cast<uint64_t>(second)<<17);
+  return ahash(key^stream);
+}
+void FixAssociatingKinetics::process_sweep(StickerStates &states, std::vector<StickerEdge> &edges, bigint timestep)
+{
+  const uint64_t order=UINT64_C(0x4f52444552), accept=UINT64_C(0x414343455054);
+  std::sort(edges.begin(),edges.end(),[&](const StickerEdge &a,const StickerEdge &b) {
+    uint64_t pa=random_value(seed,timestep,a.first,a.second,order), pb=random_value(seed,timestep,b.first,b.second,order);
+    return pa!=pb ? pa<pb : (a.first!=b.first ? a.first<b.first : a.second<b.second);
+  });
+  double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
+  for (const auto &edge : edges) {
+    auto i=states.find(edge.first), j=states.find(edge.second);
+    if (i==states.end() || j==states.end()) continue;
+    bool make=!i->second.partner&&!j->second.partner;
+    bool cut=i->second.partner==edge.second&&j->second.partner==edge.first;
+    if (!make&&!cut) continue;
+    double du=pair->delta_u(edge.r);
+    double a=make ? std::min(1.0,std::exp(-du/temperature)) : std::min(1.0,std::exp(du/temperature));
+    if ((random_value(seed,timestep,edge.first,edge.second,accept)>>11)*0x1.0p-53 >= q*a) continue;
+    accepted_events.push_back({edge.first,edge.second,i->second.molecule,j->second.molecule,make});
+    i->second.partner=make ? edge.second : 0;
+    j->second.partner=make ? edge.first : 0;
+    if (make) ++created; else ++broken;
+  }
+}
 void FixAssociatingKinetics::end_of_step()
 {
   if (update->ntimestep % nevery || !list) return;
   accepted_events.clear();
   neighbor->build_one(list);
-  struct Edge { int i,j; uint64_t p; }; std::vector<Edge> edges;
+  StickerStates states;
+  for (int i=0;i<atom->nlocal;++i)
+    if (atom->mask[i]&groupbit) states.emplace(atom->tag[i],StickerState{partner[i],atom->molecule ? atom->molecule[i] : 0});
+  std::vector<StickerEdge> edges;
   for(int ii=0;ii<list->inum;++ii) { int i=list->ilist[ii]; if(!(atom->mask[i]&groupbit)) continue; int *n=list->firstneigh[i];
     for(int jj=0;jj<list->numneigh[i];++jj) { int j=n[jj]&NEIGHMASK; if(!(atom->mask[j]&groupbit)||((n[jj]>>SBBITS)&3)==1) continue; if(atom->tag[i]>=atom->tag[j]) continue;
-      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); if(dx*dx+dy*dy+dz*dz<r_assoc*r_assoc) { uint64_t ti=static_cast<uint64_t>(atom->tag[i]),tj=static_cast<uint64_t>(atom->tag[j]); uint64_t key=static_cast<uint64_t>(seed)^static_cast<uint64_t>(update->ntimestep)^(ti<<1)^(tj<<17); edges.push_back({i,j,ahash(key^UINT64_C(0x4f52444552))}); } }}
-  std::sort(edges.begin(),edges.end(),[](const Edge&a,const Edge&b){return a.p<b.p;});
-  double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
-  for(auto &e:edges) { tagint pi=partner[e.i],pj=partner[e.j]; bool make=!pi&&!pj, cut=pi==atom->tag[e.j]&&pj==atom->tag[e.i]; if(!make&&!cut) continue;
-    double dx=atom->x[e.i][0]-atom->x[e.j][0],dy=atom->x[e.i][1]-atom->x[e.j][1],dz=atom->x[e.i][2]-atom->x[e.j][2]; domain->minimum_image(FLERR,dx,dy,dz); double du=pair->delta_u(std::sqrt(dx*dx+dy*dy+dz*dz)); double a=make?std::min(1.0,std::exp(-du/temperature)):std::min(1.0,std::exp(du/temperature));
-    uint64_t ti=static_cast<uint64_t>(atom->tag[e.i]), tj=static_cast<uint64_t>(atom->tag[e.j]); uint64_t key=static_cast<uint64_t>(seed)^static_cast<uint64_t>(update->ntimestep)^(ti<<1)^(tj<<17);
-    if((ahash(key^UINT64_C(0x414343455054))>>11)*0x1.0p-53 < q*a) {
-      tagint ti=atom->tag[e.i], tj=atom->tag[e.j], mi=atom->molecule ? atom->molecule[e.i] : 0, mj=atom->molecule ? atom->molecule[e.j] : 0;
-      if(tj<ti) { std::swap(ti,tj); std::swap(mi,mj); }
-      accepted_events.push_back({ti,tj,mi,mj,make});
-      partner[e.i]=make?atom->tag[e.j]:0; partner[e.j]=make?atom->tag[e.i]:0; if(make)++created;else++broken; }}
+      double dx=atom->x[i][0]-atom->x[j][0],dy=atom->x[i][1]-atom->x[j][1],dz=atom->x[i][2]-atom->x[j][2]; domain->minimum_image(FLERR,dx,dy,dz); double rsq=dx*dx+dy*dy+dz*dz; if(rsq<r_assoc*r_assoc) edges.push_back({atom->tag[i],atom->tag[j],std::sqrt(rsq)}); }}
+  process_sweep(states,edges,update->ntimestep);
+  for (int i=0;i<atom->nlocal;++i) {
+    auto state=states.find(atom->tag[i]);
+    if (state!=states.end()) partner[i]=state->second.partner;
+  }
   comm->forward_comm(this);
 }
 double FixAssociatingKinetics::compute_vector(int n) {

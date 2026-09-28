@@ -7,6 +7,8 @@ FixStyle(associating/kinetics,FixAssociatingKinetics);
 #ifndef LMP_FIX_ASSOCIATING_KINETICS_H
 #define LMP_FIX_ASSOCIATING_KINETICS_H
 #include "fix.h"
+#include <cstdint>
+#include <unordered_map>
 #include <vector>
 namespace LAMMPS_NS {
 class FixAssociatingKinetics : public Fix {
@@ -36,6 +38,9 @@ class FixAssociatingKinetics : public Fix {
   tagint *partners() const { return partner; }
   const std::vector<Event> &events() const { return accepted_events; }
  private:
+  struct StickerState { tagint partner, molecule; };
+  struct StickerEdge { tagint first, second; double r; };
+  using StickerStates = std::unordered_map<tagint, StickerState>;
   tagint *partner;
   tagint first, second;
   int debug_pair;
@@ -48,6 +53,8 @@ class FixAssociatingKinetics : public Fix {
   class PairAssociating *pair;
   int nmax_old;
   void initialize_debug_pair();
+  static uint64_t random_value(uint64_t, bigint, tagint, tagint, uint64_t);
+  void process_sweep(StickerStates &, std::vector<StickerEdge> &, bigint);
 };
 }
 #endif
