@@ -20,10 +20,20 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
   size_peratom_cols = 0;
   peratom_freq = 1;
   restart_peratom = 1;
+  comm_border = 1;
   comm_forward = 1;
   grow_arrays(atom->nmax);
+  atom->add_callback(Atom::GROW);
+  atom->add_callback(Atom::RESTART);
+  atom->add_callback(Atom::BORDER);
 }
-FixAssociatingKinetics::~FixAssociatingKinetics() { memory->destroy(partner); }
+FixAssociatingKinetics::~FixAssociatingKinetics()
+{
+  atom->delete_callback(id,Atom::GROW);
+  atom->delete_callback(id,Atom::RESTART);
+  atom->delete_callback(id,Atom::BORDER);
+  memory->destroy(partner);
+}
 int FixAssociatingKinetics::setmask() { return 0; }
 void FixAssociatingKinetics::init()
 {
@@ -59,6 +69,10 @@ int FixAssociatingKinetics::pack_border(int n,int *list,double *buf)
 { int m=0; for(int i=0;i<n;++i) buf[m++]=ubuf(partner[list[i]]).d; return m; }
 int FixAssociatingKinetics::unpack_border(int n,int firsti,double *buf)
 { int m=0; for(int i=firsti;i<firsti+n;++i) partner[i]=(tagint)ubuf(buf[m++]).i; return m; }
+int FixAssociatingKinetics::pack_forward_comm(int n,int *list,double *buf,int,int *)
+{ int m=0; for(int i=0;i<n;++i) buf[m++]=ubuf(partner[list[i]]).d; return m; }
+void FixAssociatingKinetics::unpack_forward_comm(int n,int firsti,double *buf)
+{ int m=0; for(int i=firsti;i<firsti+n;++i) partner[i]=(tagint)ubuf(buf[m++]).i; }
 int FixAssociatingKinetics::pack_exchange(int i,double *buf) { buf[0]=ubuf(partner[i]).d; return 1; }
 int FixAssociatingKinetics::unpack_exchange(int i,double *buf) { partner[i]=(tagint)ubuf(buf[0]).i; return 1; }
 int FixAssociatingKinetics::pack_restart(int i,double *buf) { buf[0]=2; buf[1]=ubuf(partner[i]).d; return 2; }

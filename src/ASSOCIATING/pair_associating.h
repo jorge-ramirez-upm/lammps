@@ -24,6 +24,7 @@ class PairAssociating : public Pair {
   double fene(double) const;
   double kg_derivative(double) const;
   double find_rstar() const;
+  void allocate();
 };
 }
 #endif

@@ -6,21 +6,40 @@
 #include "fix_associating_kinetics.h"
 #include "force.h"
 #include "modify.h"
+#include "memory.h"
+#include "neighbor.h"
 #include "utils.h"
 #include <cmath>
 using namespace LAMMPS_NS;
 
 PairAssociating::PairAssociating(LAMMPS *lmp) : Pair(lmp), k(0), r0(0), ee(0), rstar(0), shift(0), coeff_set(0), fix(nullptr)
 { restartinfo=0; single_enable=0; }
-PairAssociating::~PairAssociating() = default;
+PairAssociating::~PairAssociating()
+{
+  if (allocated) { memory->destroy(setflag); memory->destroy(cutsq); }
+}
 void PairAssociating::settings(int narg,char **)
 { if (narg) error->all(FLERR,"Illegal pair_style associating command"); }
 void PairAssociating::coeff(int narg,char **arg)
 {
   if (narg != 5) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (!allocated) allocate();
+  int ilo,ihi,jlo,jhi;
+  utils::bounds(FLERR,arg[0],1,atom->ntypes,ilo,ihi,error);
+  utils::bounds(FLERR,arg[1],1,atom->ntypes,jlo,jhi,error);
   k=utils::numeric(FLERR,arg[2],false,lmp); r0=utils::numeric(FLERR,arg[3],false,lmp); ee=utils::numeric(FLERR,arg[4],false,lmp);
   if (k<=0 || r0<=0) error->all(FLERR,"Invalid associating FENE parameters");
   rstar=find_rstar(); shift=fene(rstar); coeff_set=1;
+  for (int i=ilo;i<=ihi;++i)
+    for (int j=MAX(jlo,i);j<=jhi;++j) setflag[i][j]=1;
+}
+void PairAssociating::allocate()
+{
+  allocated=1;
+  int n=atom->ntypes+1;
+  memory->create(setflag,n,n,"associating:setflag");
+  memory->create(cutsq,n,n,"associating:cutsq");
+  for (int i=1;i<n;++i) for (int j=i;j<n;++j) setflag[i][j]=0;
 }
 void PairAssociating::init_style()
 {
@@ -30,6 +49,8 @@ void PairAssociating::init_style()
     if (candidate) { if (fix) error->all(FLERR,"Only one fix associating/kinetics is allowed"); fix=candidate; }
   }
   if (!fix) error->all(FLERR,"Pair associating requires fix associating/kinetics");
+  if (atom->map_style == Atom::MAP_NONE) error->all(FLERR,"Pair associating requires an atom map");
+  neighbor->add_request(this);
 }
 double PairAssociating::init_one(int,int) { return r0; }
 double PairAssociating::fene(double r) const { return -0.5*k*r0*r0*std::log(1.0-r*r/(r0*r0)); }
@@ -50,14 +71,12 @@ void PairAssociating::compute(int eflag,int vflag)
     int j=atom->map(partner[i]);
     if (j < 0) error->one(FLERR,"Associating partner is outside communication range");
     if (partner[j] != tag[i]) error->one(FLERR,"Associating partner state is not reciprocal");
-    double dx=x[i][0]-x[j][0], dy=x[i][1]-x[j][1], dz=x[i][2]-x[j][2]; domain->minimum_image(dx,dy,dz);
+    double dx=x[i][0]-x[j][0], dy=x[i][1]-x[j][1], dz=x[i][2]-x[j][2]; domain->minimum_image(FLERR,dx,dy,dz);
     double rsq=dx*dx+dy*dy+dz*dz, r=std::sqrt(rsq), arg=1.0-rsq/(r0*r0);
     if (arg <= 0.0) error->one(FLERR,"Associating FENE bond exceeded R0");
     double fbond=-k/arg; f[i][0]+=dx*fbond; f[i][1]+=dy*fbond; f[i][2]+=dz*fbond;
-    if (tag[i] < partner[i]) {
-      double e=fene(r)-shift-ee;
-      if (eflag_global) eng_vdwl += e;
-      if (vflag_global) { virial[0]+=dx*dx*fbond; virial[1]+=dy*dy*fbond; virial[2]+=dz*dz*fbond; virial[3]+=dx*dy*fbond; virial[4]+=dx*dz*fbond; virial[5]+=dy*dz*fbond; }
-    }
+    if (evflag && tag[i] < partner[i])
+      ev_tally(i,j,atom->nlocal,1,fene(r)-shift-ee,0.0,fbond,dx,dy,dz);
   }
+  if (vflag_fdotr) virial_fdotr_compute();
 }
