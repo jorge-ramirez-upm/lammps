@@ -9,7 +9,7 @@ run() {
   local out="$root/results/${tag}.dat" log="$root/results/${tag}.log"
   [[ -s $out ]] && { echo "skip $tag"; return; }
   echo "run $tag"
-  local cmd=("$lmp" -in "$root/in.dimer_kinetics.lmp" -log "$log" -var n 256 -var rho 0.05 -var T 1.0 -var nu0 20 -var Ea "$ea" -var Ee "$ee" -var Nevery "$every" -var warmup 20000 -var production 100000 -var sample 100 -var seed "$((410000 + rep * 1000 + ea * 100 + ee * 10 + every))" -var seed2 "$((410011 + rep * 1000 + ea * 100 + ee * 10 + every))" -var out "$out")
+  local cmd=("$lmp" -in "$root/in.dimer_kinetics.lmp" -log "$log" -var n 256 -var rho 0.05 -var T 1.0 -var nu0 20 -var Ea "$ea" -var Ee "$ee" -var Nevery "$every" -var warmup 20000 -var production 100000 -var sample 100 -var seed "$((410000 + rep * 1000 + ea * 100 + ee * 10 + every))" -var seed2 "$((410011 + rep * 1000 + ea * 100 + ee * 10 + every))" -var out "$out" -var damp "${DAMP:-2.0}")
   if ((np > 1)); then mpirun -np "$np" "${cmd[@]}"; else "${cmd[@]}"; fi
 }
 case $mode in
