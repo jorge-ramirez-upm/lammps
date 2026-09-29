@@ -72,3 +72,31 @@ terms. The analysis uses Cs0=mean(sum(Pshear^2)/3),
 Cn0=mean(sum(N^2)/3), and R0=Cn0/(4Cs0), with 10,000-step contiguous blocks
 for SEM. It also writes component means, cross terms, stationarity tables,
 orientation tensors, snapshot persistence, CSV outputs, and optional plots.
+
+## R1-B2.1: time-dependent isotropy from the stationary B2 trajectory
+
+R1-B2.1 reuses the B2 million-step raw trajectory; no new MD is required.
+`analyze_time_dependent_isotropy.py` computes unbiased FFT ACFs independently
+in contiguous 20x50k and 10x100k blocks, then writes their means and SEMs for
+`Cs`, `Cn/4`, `D=Cn/4-Cs`, and the signal-gated ratio. A lag is useful only if
+`abs(Cs)>2 SEM(Cs)`. The script also defines asymmetric network persistence as
+`Q(dt)=mean(|E(t) intersection E(t+dt)|/|E(t)|)` over all valid snapshot pairs.
+
+```bash
+python3 analyze_time_dependent_isotropy.py "$F".r1b2.raw --out "$F".r1b21 \
+  --network-glob "$F".r1b2.network.*.dat
+```
+
+Both block schemes reproduce `Riso(0)=1.001635`, consistent with B2. The
+useful window reaches the common 250-time-unit output limit. The largest useful
+`abs(D)/SEM(D)` is 4.80 (50k blocks, time 60.16) and 8.92 (100k blocks, time
+3.65); their location and sign are not stable against block size. Respectively
+90.4% and 88.7% of useful lags are within 2 SEM of zero.
+
+The persistence curve gives `Q(100)=0.9581`; it first falls below 0.9 at 300,
+below 0.75 at 800, and below 0.5 at 1800 time units. Thus 50k steps (500 time
+units) and 100k steps (1000 time units) remain strongly network-correlated
+(`Q=0.819` and `0.675`), so their nominal block SEMs are not independent-sample
+errors. Gate: **B** — apparent finite-time deviations remain, but are dominated
+by persistence/block dependence; longer stationary sampling is required before
+claiming a time-dependent anisotropy.
