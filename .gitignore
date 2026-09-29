@@ -74,4 +74,6 @@ src/Makefile.package.settings-e
 bench/associating/javier_star_A4_N10_rho08/javier_b24_warmup.restart
 bench/associating/javier_star_A4_N10_rho08/network.*.dat
 bench/associating/dimer_kinetics/results/*.log
+bench/associating/dimer_kinetics/results_damp/damp*/*.log
 build-k1/
+
