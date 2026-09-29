@@ -154,21 +154,21 @@ cmake --build build-k1 -j"$(nproc)"
 # Baseline plus pilots: raw, condition, and density-trend CSV outputs
 python3 bench/associating/dimer_kinetics/analysis/fit_dimer_kinetics.py \
   'bench/associating/dimer_kinetics/results/*.dat' \
-  --summary bench/associating/dimer_kinetics/results/k1d.csv
+  --summary bench/associating/dimer_kinetics/results/k1e.csv
 
 # Only after reviewing pilots: restartable D1/D2 production at new densities
 ./bench/associating/dimer_kinetics/run_campaign.sh ./build-k1/lmp density-full 1
 python3 bench/associating/dimer_kinetics/analysis/fit_dimer_kinetics.py \
   'bench/associating/dimer_kinetics/results/*.dat' \
-  --summary bench/associating/dimer_kinetics/results/k1d.csv
+  --summary bench/associating/dimer_kinetics/results/k1e.csv
 
 # Optional: matplotlib only
 python3 bench/associating/dimer_kinetics/analysis/plot_density.py \
-  bench/associating/dimer_kinetics/results/k1d_conditions.csv
+  bench/associating/dimer_kinetics/results/k1e_conditions.csv
 ```
 
-The numeric path requires only Python's standard library. `k1d.csv` contains
-raw replica results; `k1d_conditions.csv` supplies replica uncertainties for
+The numeric path requires only Python's standard library. `k1e.csv` contains
+raw replica results; `k1e_conditions.csv` supplies replica uncertainties for
 rates, normalized rates, and equilibrium constants; `k1d_trends.csv` gives
 per-density fits for \(\ln k_f\), exact \(\ln q\), normalized rates,
 \(\ln k_b\), and both equilibrium constants. The new production grid is 96
@@ -193,3 +193,82 @@ must accompany \(R^2\). At \(\rho=0.20\), \(R^2\) was about 0.60: this is not
 by itself a demonstrated failure, but makes fit-quality and residual review an
 explicit K1-D criterion. The slow \(E_a=6\) and strongly bound \(E_e=8\)
 production cases remain the likely cases requiring a documented extension.
+
+## K1-E: event/exposure kinetic estimators
+
+K1-E makes event/exposure rates the primary kinetic estimators. Let
+\(N_A=V[A]\) and \(N_B=V[B]\). The observed cumulative creation and break
+counters provide exact event totals over the sampled interval. For breaking,
+the macroscopic total hazard is \(V k_b[B]=k_bN_B\), giving
+
+\[
+\widehat k_b=\frac{N_{\rm break}}{\int N_B(t)dt}
+=\frac{N_{\rm break}}{V\int[B(t)]dt}.
+\]
+
+The identical-reactant convention requires care. There are
+\({N_A\choose2}=N_A(N_A-1)/2\) unordered pairs. If \(\lambda_{\rm pair}\)
+is their hazard, the exact total creation hazard is
+\(\lambda_{\rm pair}N_A(N_A-1)/2\). The concentration equation instead gives
+\(V k_f[A]^2=k_fN_A^2/V\) in the large-\(N\) limit. Matching them gives
+\(\lambda_{\rm pair}=2k_f/V\), hence the finite-size continuation
+
+\[
+\text{creation hazard}=k_f\frac{N_A(N_A-1)}V,
+\qquad
+\widehat k_f=\frac{N_{\rm create}}
+ {\int N_A(t)[N_A(t)-1]dt/V}.
+\]
+
+Thus the factor two belongs in the *per-unordered-pair* hazard and cancels in
+the reported exact-pair exposure. Replacing \(N_A(N_A-1)\) by \(N_A^2\)
+recovers the stated concentration convention with an \(O(1/N_A)\) correction.
+
+Exposures are trapezoidal integrals over the stored samples in physical MD
+time. For K1-D, output and chemistry are both every 100 steps, so every
+chemical state boundary is sampled. The analysis additionally reports the
+relative difference between trapezoid and left/right rectangle exposures; it
+is the finite-output-cadence approximation diagnostic. K1-C `Nevery=50` has
+two chemical sweeps per stored interval, so its exposure is less exact and is
+not used for K1-E density trends. Cumulative event counts themselves remain
+exact at all cadences.
+
+The analytic transient fit remains an independent diagnostic (`kf_fit`,
+`kb_fit`, `Keq_fit`, SSE, and \(R^2\)). Every raw and condition CSV now lists
+both estimators, their relative differences, direct \(K_{\rm eq}\), event
+counts, and both integrated exposures. Four-replica standard errors are
+reported for all event and fit rates. Deterministically seeded replica-level
+bootstrap resampling supplies uncertainty on regression slopes.
+
+For activation tests the relevant prediction is not a straight Arrhenius
+line: K1-E fits only \(C_\rho\) in
+\(\ln k_f^{\rm event}=C_\rho+\ln q(E_a)\), preserving the exact finite-step
+shape. It then tests \(k_f^{\rm event}/q\) and \(k_b^{\rm event}/q\) for
+residual activation dependence. Equilibrium regressions report intercepts and
+bootstrap uncertainties for event, fit, and direct \(\ln K_{\rm eq}\) slopes;
+the ratio remains the strongest detailed-balance test.
+
+### K1-E consolidation from the existing production trajectories
+
+No new production was launched for K1-E. Event exposures have trapezoid versus
+rectangle differences below 0.11% at the central condition in every density,
+so the 100-step output is adequate for K1-D (`Nevery=100`) event analysis.
+The event-based \(\ln K_{\rm eq}\)--\(E_e\) slopes (bootstrap one-standard-
+deviation uncertainties) are 0.974(14), 0.984(9), 0.992(5), and 0.997(10) for
+\(\rho=0.025,0.05,0.10,0.20\), respectively. Direct-equilibrium slopes are
+0.961(17), 0.984(10), 0.992(9), and 1.018(12). They are all compatible with
+\(1/T=1\). The intercept shifts from about -2.99 to -2.80 across this density
+range; that is a concentration-constant observation, not an activity-coefficient
+measurement.
+
+The event \(k_f/q\) activation slopes are 0.002(18), 0.005(11),
+-0.019(15), and -0.011(10), respectively: there is no resolved systematic
+residual activation dependence. The dilute \(k_b/q\) slope is
+-0.012(18), resolving the formerly reported anomalous value near -1. Its
+\(E_a=6\) condition has only about 39 creations and 25 breaks per replica and
+therefore broad replica scatter, but no evidence requiring an automatic
+longer rerun. The event estimator identifies transient-fit instability: some
+weak/slow trajectories alter both fitted rates together while preserving their
+ratio. Event and transient rates are used side by side, but event/exposure
+rates are primary; their equilibrium ratios and direct constants remain
+consistent.
