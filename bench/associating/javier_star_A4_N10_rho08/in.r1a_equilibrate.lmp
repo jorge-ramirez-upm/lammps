@@ -5,7 +5,9 @@ boundary p p p
 special_bonds fene
 atom_modify map yes
 variable eqsteps equal ${EQUIL_STEPS}
-variable block equal 10000
+variable TRAJ_EVERY index 10000
+variable NETWORK_EVERY index 10000
+variable block equal ${NETWORK_EVERY}
 read_data ${F}.lammpsdat
 group stickers type 2
 group stars type 1 2
@@ -26,7 +28,7 @@ fix kinetics stickers associating/kinetics 100 492845 10.0 4.0 1.0 ${rwca}
 # Normalize bonded-star image flags for unwrapped-coordinate diagnostics only.
 reset_atoms image stars
 # Unwrapped polymer coordinates are the authoritative Rg and COM-MSD input.
-dump starcoords stars custom 5000 ${F}.r1a.unwrapped.lammpstrj id mol type xu yu zu
+dump starcoords stars custom/gz ${TRAJ_EVERY} ${F}.r1a.unwrapped.lammpstrj.gz id mol type xu yu zu
 dump_modify starcoords sort id
 variable t equal temp
 variable ep equal pe

@@ -1,0 +1,40 @@
+# R1-B0: raw and online six-channel stress correlation, no association.
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+variable prodsteps equal ${REF_STRESS_STEPS}
+read_restart ${F}.r1b0.equil.restart
+bond_style fene
+bond_coeff 1 30.0 1.5 1.0 1.0
+variable rwca equal 2.0^(1.0/6.0)
+pair_style lj/cut ${rwca}
+pair_coeff * * 1.0 1.0 ${rwca}
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+fix integrate all nve
+fix thermostat all langevin 1.0 1.0 2.0 48279 zero yes
+reset_timestep 0
+compute press all pressure thermo_temp
+variable pxx equal c_press[1]
+variable pyy equal c_press[2]
+variable pzz equal c_press[3]
+variable sxy equal c_press[4]
+variable sxz equal c_press[5]
+variable syz equal c_press[6]
+variable nxy equal c_press[1]-c_press[2]
+variable nxz equal c_press[1]-c_press[3]
+variable nyz equal c_press[2]-c_press[3]
+# Production R1-A cadence, retained exactly for the online/offline check.
+fix corr all ave/correlate/long 1 100000 v_sxy v_sxz v_syz v_nxy v_nxz v_nyz type auto file ${F}.r1b0.gt overwrite ncorr 40
+# Per-step raw output is validation-only; it is not used by R1-A production.
+variable st equal step
+fix raw all print 1 "${st} ${pxx} ${pyy} ${pzz} ${sxy} ${sxz} ${syz} ${nxy} ${nxz} ${nyz}" file ${F}.r1b0.raw screen no title "# step pxx pyy pzz pxy pxz pyz nxy nxz nyz"
+thermo 1000
+thermo_style custom step temp pe etotal c_press[1] c_press[2] c_press[3] c_press[4] c_press[5] c_press[6]
+thermo_modify norm no
+run ${prodsteps}
+write_restart ${F}.r1b0.stress.restart

@@ -1,5 +1,7 @@
 # R1-A: equilibrium rheology prototype
 
+See [R1-B0 nonassociating stress validation](README_R1B0.md) for the independent tensor/correlator gate.
+
 R1-A establishes a reproducible equilibration-to-stress-correlation workflow
 for Javier's realistic 1,000-star associating KG/WCA system. It is a prototype,
 not a terminal-rheology production result. It preserves 4,000 type-2 stickers,
@@ -110,7 +112,7 @@ F=Stars_NA4N10C1000rho0.85rhopoly0.8.equilibrated
 mpirun -np 8 ../../../build-r1a/lmp -var F "$F" -var EQUIL_STEPS 200000 -in in.r1a_equilibrate.lmp
 python3 analyze_r1a_equil.py "$F".r1a.network.*.dat --out "$F".r1a_network_summary.csv
 mpirun -np 8 ../../../build-r1a/lmp -var F "$F" -var CONT_STEPS 100000 -in in.r1a_equilibrate_continue.lmp
-python3 analyze_r1a_unwrapped.py "$F".r1a.cont.unwrapped.lammpstrj --data "$F".lammpsdat --diagnostics "$F".r1a.cont.diagnostics --snapshots "$F".r1a.cont.network.*.dat --out-prefix "$F".r1a.cont
+python3 analyze_r1a_unwrapped.py "$F".r1a.cont.unwrapped.lammpstrj.gz --data "$F".lammpsdat --diagnostics "$F".r1a.cont.diagnostics --snapshots "$F".r1a.cont.network.*.dat --out-prefix "$F".r1a.cont
 mpirun -np 8 ../../../build-r1a/lmp -var F "$F" -var PILOT_STEPS 1000000 -in in.r1a_stress.lmp
 python3 analyze_r1a_stress.py "$F".gt --volume 51250.5882353 --run-steps 1000000
 ```

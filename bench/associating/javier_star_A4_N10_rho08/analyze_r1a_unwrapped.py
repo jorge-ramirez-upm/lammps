@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Topology-consistent unwrapped R1-A.1 conformation/stationarity summary."""
-import argparse, csv, glob, math, os, re
+import argparse, csv, glob, gzip, math, os, re
 
 
 def bonds(path):
@@ -15,7 +15,7 @@ def bonds(path):
 
 
 def frames(path):
-    with open(path) as f:
+    with (gzip.open(path, 'rt') if path.endswith('.gz') else open(path)) as f:
         while True:
             line=f.readline()
             if not line: return

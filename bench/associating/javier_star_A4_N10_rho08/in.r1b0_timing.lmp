@@ -1,0 +1,25 @@
+# R1-B0 timing: MODE 0=MD, 1=per-step pressure, 2=pressure plus multi-tau.
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+variable nsteps equal ${REF_TIMING_STEPS}
+read_data ${F}.lammpsdat
+bond_style fene
+bond_coeff 1 30.0 1.5 1.0 1.0
+variable rwca equal 2.0^(1.0/6.0)
+pair_style lj/cut ${rwca}
+pair_coeff * * 1.0 1.0 ${rwca}
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+velocity all create 1.0 4839876 mom yes rot yes dist gaussian
+fix integrate all nve
+fix thermostat all langevin 1.0 1.0 2.0 48279 zero yes
+thermo 10000
+thermo_style custom step temp pe
+thermo_modify norm no
+if "${MODE} == 1" then "compute press all pressure thermo_temp" "fix pressure_sample all ave/time 1 1 1 c_press[1] file ${F}.r1b0.timing.pressure.dat"
+if "${MODE} == 2" then "compute press all pressure thermo_temp" "variable sxy equal c_press[4]" "variable sxz equal c_press[5]" "variable syz equal c_press[6]" "variable nxy equal c_press[1]-c_press[2]" "variable nxz equal c_press[1]-c_press[3]" "variable nyz equal c_press[2]-c_press[3]" "fix corr all ave/correlate/long 1 100000 v_sxy v_sxz v_syz v_nxy v_nxz v_nyz type auto file ${F}.r1b0.timing.gt overwrite ncorr 40"
+run ${nsteps}

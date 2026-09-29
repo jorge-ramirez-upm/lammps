@@ -1,0 +1,25 @@
+# R1-B0: ordinary KG/WCA reference; association is deliberately absent.
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+variable eqsteps equal ${REF_EQUIL_STEPS}
+read_data ${F}.lammpsdat
+bond_style fene
+bond_coeff 1 30.0 1.5 1.0 1.0
+variable rwca equal 2.0^(1.0/6.0)
+pair_style lj/cut ${rwca}
+pair_coeff * * 1.0 1.0 ${rwca}
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+velocity all create 1.0 4839876 mom yes rot yes dist gaussian
+fix integrate all nve
+fix thermostat all langevin 1.0 1.0 2.0 48279 zero yes
+thermo 1000
+thermo_style custom step temp pe etotal
+thermo_modify norm no
+run ${eqsteps}
+write_restart ${F}.r1b0.equil.restart
