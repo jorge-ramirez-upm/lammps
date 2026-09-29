@@ -100,3 +100,31 @@ units) and 100k steps (1000 time units) remain strongly network-correlated
 errors. Gate: **B** — apparent finite-time deviations remain, but are dominated
 by persistence/block dependence; longer stationary sampling is required before
 claiming a time-dependent anisotropy.
+
+## R1-B2.2: gapped-window isotropy test
+
+No MD was run. `analyze_gapped_isotropy.py` applies the same unbiased FFT ACF
+to five 50k-step windows (maximum lag 25k) and treats them as weakly correlated
+sampling units. Scheme A starts at steps `10000, 240000, 470000, 700000,
+930000`; scheme B is the deterministic offset `110000, 320000, 530000,
+740000, 950000`. Every window has length 50k steps; their ends are start plus
+50k. The corresponding nearest start separations are 2300 and 2100 time units,
+where mean asymmetric network persistence is 0.403 and 0.431, respectively.
+
+```bash
+python3 analyze_gapped_isotropy.py "$F".r1b2.raw --out "$F".r1b22 \
+  --network-glob "$F".r1b2.network.*.dat
+```
+
+The window-mean zero-lag ratios are 1.00250 (A) and 1.00139 (B), preserving
+the B2 result. Both schemes remain useful through the 250-time-unit analysis
+limit. Their largest `abs(D)/SEM(D)` values are 21.14 at time 236.68 with
+negative D (A), and 14.38 at time 179.83 with positive D (B). Only 74.8% and
+75.1% of useful lags are within 2 SEM. Their all-pair mean Q values are 0.227
+and 0.252, so these are weakly—not exactly—independent windows.
+
+Unlike B2.1 contiguous blocks (maxima 4.80 at 60.16 for 50k, and 8.92 at 3.65
+for 100k), gapping does not produce a common sign, magnitude, or lag location.
+Gate: **B, inconclusive**. Independent long trajectories remain necessary;
+neither correlated contiguous blocks nor these five weakly correlated windows
+support a robust finite-time discrepancy.
