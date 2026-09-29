@@ -1,0 +1,46 @@
+# R1-A network/conformational equilibration; invoke with -var F and -var EQUIL_STEPS.
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+variable eqsteps equal ${EQUIL_STEPS}
+variable block equal 10000
+read_data ${F}.lammpsdat
+group stickers type 2
+group stars type 1 2
+bond_style fene
+bond_coeff 1 30.0 1.5 1.0 1.0
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1.0 1.0 ${rwca}
+pair_coeff * * associating 30.0 1.5 8.0
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+velocity all create 1.0 4839876 mom yes rot yes dist gaussian
+fix integrate all nve
+fix thermostat all langevin 1.0 1.0 2.0 48279 zero yes
+fix kinetics stickers associating/kinetics 100 492845 10.0 4.0 1.0 ${rwca}
+# Molecule IDs 1..1000 are stars; raw chunk files retain Rg and COM-MSD by star.
+compute starchunk stars chunk/atom molecule nchunk once ids once
+compute star_rg stars gyration/chunk starchunk
+compute star_msd stars msd/chunk starchunk
+fix rgout all ave/time 10000 1 10000 c_star_rg file ${F}.r1a.star_rg mode vector
+fix msdout all ave/time 10000 1 10000 c_star_msd[4] file ${F}.r1a.star_msd mode vector
+variable t equal temp
+variable ep equal pe
+thermo 1000
+thermo_style custom step temp pe etotal f_kinetics[1] f_kinetics[2] f_kinetics[3]
+thermo_modify norm no
+fix diagnostics all ave/time 1000 1 1000 v_t v_ep f_kinetics[1] f_kinetics[2] f_kinetics[3] file ${F}.r1a.equil.diagnostics mode scalar ave one format "%16.12g"
+variable nblock equal v_eqsteps/v_block
+variable i loop ${nblock}
+label equil_loop
+run ${block}
+variable snap equal step
+write_associating_network ${F}.r1a.network.${snap}.dat fix kinetics
+next i
+jump SELF equil_loop
+write_restart ${F}.r1a.equil.restart
