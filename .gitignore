@@ -73,3 +73,5 @@ src/Makefile.package.settings-e
 /.claude/scheduled_tasks.lock
 bench/associating/javier_star_A4_N10_rho08/javier_b24_warmup.restart
 bench/associating/javier_star_A4_N10_rho08/network.*.dat
+bench/associating/dimer_kinetics/results/*.log
+build-k1/
