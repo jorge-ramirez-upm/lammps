@@ -1,0 +1,86 @@
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+variable B2_STEPS index 1000000
+variable NETWORK_EVERY index 10000
+variable LANGEVIN_SEED index 58280
+variable KINETICS_SEED index 592846
+variable block equal ${NETWORK_EVERY}
+read_restart ${F}.r1b1.equil.restart
+group stickers type 2
+group stars type 1 2
+bond_style fene
+bond_coeff 1 30 1.5 1 1
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1 1 ${rwca}
+pair_coeff * * associating 30 1.5 8
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+fix integrate all nve
+fix thermostat all langevin 1 1 2 ${LANGEVIN_SEED} zero yes
+fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10 4 1 ${rwca}
+reset_timestep 0
+
+# Component tensors are native global virials.  pair/hybrid selects one
+# hybrid/overlay sub-style; no per-atom reconstruction or changed forces.
+compute ptotal all pressure thermo_temp
+compute pke all pressure thermo_temp ke
+compute pwca all pressure NULL pair/hybrid lj/cut
+compute pperm all pressure NULL bond
+compute passoc all pressure NULL pair/hybrid associating
+variable tag string ${F}.r1b2
+variable st equal step
+variable ep equal pe
+variable active equal f_kinetics[1]
+variable created equal f_kinetics[2]
+variable broken equal f_kinetics[3]
+variable t1 equal c_ptotal[1]
+variable t2 equal c_ptotal[2]
+variable t3 equal c_ptotal[3]
+variable t4 equal c_ptotal[4]
+variable t5 equal c_ptotal[5]
+variable t6 equal c_ptotal[6]
+variable k1 equal c_pke[1]
+variable k2 equal c_pke[2]
+variable k3 equal c_pke[3]
+variable k4 equal c_pke[4]
+variable k5 equal c_pke[5]
+variable k6 equal c_pke[6]
+variable w1 equal c_pwca[1]
+variable w2 equal c_pwca[2]
+variable w3 equal c_pwca[3]
+variable w4 equal c_pwca[4]
+variable w5 equal c_pwca[5]
+variable w6 equal c_pwca[6]
+variable p1 equal c_pperm[1]
+variable p2 equal c_pperm[2]
+variable p3 equal c_pperm[3]
+variable p4 equal c_pperm[4]
+variable p5 equal c_pperm[5]
+variable p6 equal c_pperm[6]
+variable a1 equal c_passoc[1]
+variable a2 equal c_passoc[2]
+variable a3 equal c_passoc[3]
+variable a4 equal c_passoc[4]
+variable a5 equal c_passoc[5]
+variable a6 equal c_passoc[6]
+fix raw all print 1 "${st} ${ep} ${active} ${created} ${broken} ${t1} ${t2} ${t3} ${t4} ${t5} ${t6} ${k1} ${k2} ${k3} ${k4} ${k5} ${k6} ${w1} ${w2} ${w3} ${w4} ${w5} ${w6} ${p1} ${p2} ${p3} ${p4} ${p5} ${p6} ${a1} ${a2} ${a3} ${a4} ${a5} ${a6}" file ${tag}.raw screen no title "# step pe active created broken total_xx total_yy total_zz total_xy total_xz total_yz kinetic_xx kinetic_yy kinetic_zz kinetic_xy kinetic_xz kinetic_yz wca_xx wca_yy wca_zz wca_xy wca_xz wca_yz permanent_xx permanent_yy permanent_zz permanent_xy permanent_xz permanent_yz associating_xx associating_yy associating_zz associating_xy associating_xz associating_yz"
+dump config stars custom ${NETWORK_EVERY} ${tag}.lammpstrj id mol type xu yu zu
+dump_modify config sort id
+thermo ${NETWORK_EVERY}
+thermo_style custom step temp pe f_kinetics[1] f_kinetics[2] f_kinetics[3]
+thermo_modify norm no
+variable nblock equal v_B2_STEPS/v_block
+variable i loop ${nblock}
+label loop
+run ${block}
+variable s equal step
+write_associating_network ${tag}.network.${s}.dat fix kinetics
+next i
+jump SELF loop
+write_restart ${tag}.restart

@@ -42,3 +42,33 @@ different streams) had online/offline maximum early relative differences below
 16.9. This is a preliminary **B** indication, not a final six-independent-
 replica gate: generate separated starting states and complete six 200k
 replicas before declaring a model-state violation.
+
+## R1-B2 result (1,000,000 steps)
+
+B2 used 100 complete 10,000-step blocks (dt=.01) on 8 MPI ranks. The total
+block-mean R0 is 1.00195 +/- 0.00297 SEM, so one is statistically compatible.
+Component R0 (block mean +/- SEM): kinetic 1.00236 +/- .00326; WCA 1.02107 +/-
+.00707; permanent FENE 1.00388 +/- .00351; associating FENE 1.04353 +/-.01679.
+The maximum instantaneous tensor reconstruction residual is 1.78e-14. The
+largest shear cross term is WCA--associating, -0.002897, which cancels a
+substantial part of their individual shear variances rather than causing an
+anisotropy. Permanent-bond orientation is isotropic (maximum mean diagonal
+deviation .00853 from 1/3); active-bond orientation remains somewhat anisotropic
+(.0460), but the total stress is isotropic. Adjacent 100-time-unit snapshots
+have bond persistence Q=0.958 +/- .014 (SD). Gate: **A**, subject to the
+finite-sample active-network orientation caveat.
+
+### Method and reproduction
+
+R1-B2 tests whether the B1 discrepancy already exists at zero lag, upstream of
+the correlation estimator. Run `mpirun -np 8 ../../../build-r1a/lmp -var F
+"$F" -var B2_STEPS 1000000 -in in.zero_lag_isotropy.lmp`, then
+`python3 analyze_zero_lag_isotropy.py "$F".r1b2.raw --trajectory
+"$F".r1b2.lammpstrj --data "$F".lammpsdat --out "$F".r1b2`. The input writes
+every-step total, kinetic (`ke`), WCA (`pair/hybrid lj/cut`), permanent (`bond`),
+and associating (`pair/hybrid associating`) pressure tensors. These are direct
+LAMMPS global-virial selections; the component sum check excludes hidden stress
+terms. The analysis uses Cs0=mean(sum(Pshear^2)/3),
+Cn0=mean(sum(N^2)/3), and R0=Cn0/(4Cs0), with 10,000-step contiguous blocks
+for SEM. It also writes component means, cross terms, stationarity tables,
+orientation tensors, snapshot persistence, CSV outputs, and optional plots.
