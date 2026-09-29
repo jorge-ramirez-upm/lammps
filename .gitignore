@@ -78,4 +78,4 @@ bench/associating/dimer_kinetics/results_damp/damp*/*.log
 build-k1/
 
 .venv-k1/
-
+bench/associating/Stars_NA4N5C125rho0.85rhopoly0.8/r1b3_runs/

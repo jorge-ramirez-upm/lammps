@@ -128,3 +128,30 @@ for 100k), gapping does not produce a common sign, magnitude, or lag location.
 Gate: **B, inconclusive**. Independent long trajectories remain necessary;
 neither correlated contiguous blocks nor these five weakly correlated windows
 support a robust finite-time discrepancy.
+
+## R1-B3: independent-ensemble workflow
+
+R1-B3 is deliberately not run here. It creates six independent associating
+networks from the original unassociated data file, equilibrates each for
+`EQUIL_STEPS=500000` (5000 time units), and then produces `PROD_STEPS=1000000`
+steps. Replica seeds `(velocity, Langevin, kinetics)` are respectively
+`(184729,284729,384729)` through `(184734,284734,384734)` in replica order.
+
+```bash
+LMP=/path/to/lmp MPI_NP=8 ./run_r1b3_linux.sh
+./status_r1b3.sh
+python3 analyze_r1b3_ensemble.py r1b3_runs --out r1b3_runs/r1b3
+```
+
+The launcher defaults to sequential replicas; set `PARALLEL_REPLICAS` only
+when host resources allow it. It uses `equil.complete` and `production.complete`
+markers, skips only marked stages on resume, and never treats a partial raw
+file as complete. Outputs live under ignored `r1b3_runs/replicaNN/`. Plain
+unwrapped trajectories are the default. Set `TRAJ_EXT=lammpstrj.gz` only with
+a LAMMPS build that includes COMPRESS support.
+
+The analysis uses unbiased raw-stress FFT ACFs and the six replicas—not blocks—
+as statistical units. It writes per-replica zero-lag ratios and ensemble means,
+SD, and SEM for Cs, CN/4, D, and signal-gated Riso. It must also pass early-lag
+online/offline comparison and equilibration-drift review before assigning the
+A/B/C scientific gate; no R1-B3 outcome is claimed until those runs complete.

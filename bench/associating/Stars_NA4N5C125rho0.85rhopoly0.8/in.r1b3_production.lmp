@@ -1,0 +1,59 @@
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+variable PROD_STEPS index 1000000
+variable TRAJ_EVERY index 10000
+variable NETWORK_EVERY index 10000
+variable LANGEVIN_SEED index 2
+variable KINETICS_SEED index 3
+variable TRAJ_EXT index lammpstrj
+variable block equal ${NETWORK_EVERY}
+read_restart equil.restart
+group stickers type 2
+group stars type 1 2
+bond_style fene
+bond_coeff 1 30 1.5 1 1
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1 1 ${rwca}
+pair_coeff * * associating 30 1.5 8
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+fix integrate all nve
+fix thermostat all langevin 1 1 2 ${LANGEVIN_SEED} zero yes
+fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10 4 1 ${rwca}
+reset_timestep 0
+compute press all pressure thermo_temp
+variable pxx equal c_press[1]
+variable pyy equal c_press[2]
+variable pzz equal c_press[3]
+variable sxy equal c_press[4]
+variable sxz equal c_press[5]
+variable syz equal c_press[6]
+variable nxy equal c_press[1]-c_press[2]
+variable nxz equal c_press[1]-c_press[3]
+variable nyz equal c_press[2]-c_press[3]
+variable st equal step
+fix raw all print 1 "${st} ${pxx} ${pyy} ${pzz} ${sxy} ${sxz} ${syz} ${nxy} ${nxz} ${nyz}" file production.raw screen no title "# step pxx pyy pzz pxy pxz pyz nxy nxz nyz"
+fix corr all ave/correlate/long 1 100000 v_sxy v_sxz v_syz v_nxy v_nxz v_nyz type auto file production.gt overwrite ncorr 40
+variable t equal temp
+variable ep equal pe
+fix diag all ave/time 1000 1 1000 v_t v_ep f_kinetics[1] f_kinetics[2] f_kinetics[3] file production.diagnostics mode scalar ave one
+dump traj stars custom ${TRAJ_EVERY} production.${TRAJ_EXT} id mol type xu yu zu
+dump_modify traj sort id
+thermo 1000
+thermo_style custom step temp pe f_kinetics[1] f_kinetics[2] f_kinetics[3]
+thermo_modify norm no
+variable nblock equal v_PROD_STEPS/v_block
+variable i loop ${nblock}
+label loop
+run ${block}
+variable s equal step
+write_associating_network production.network.${s}.dat fix kinetics
+next i
+jump SELF loop
+write_restart production.restart
