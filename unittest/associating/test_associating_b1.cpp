@@ -124,6 +124,18 @@ TEST_F(AssociatingB1, TwoStateFiniteStepProbabilities)
   EXPECT_LT(std::abs(make/double(n)-pc)/sem,5.0); EXPECT_LT(std::abs(cut/double(n)-pb)/seb,5.0);
 }
 
+TEST_F(AssociatingB1, NumericallyStableProbabilityKernels)
+{
+  const double tiny=1.0e-18;
+  EXPECT_GT(FixAssociatingKinetics::attempt_probability(tiny),0.0);
+  EXPECT_NEAR(FixAssociatingKinetics::attempt_probability(tiny),tiny,1.0e-32);
+  EXPECT_NEAR(FixAssociatingKinetics::attempt_probability(50.0),1.0,1.0e-15);
+  EXPECT_EQ(FixAssociatingKinetics::metropolis_factor(-1.0e6,1.0,true),1.0);
+  EXPECT_EQ(FixAssociatingKinetics::metropolis_factor(1.0e6,1.0,false),1.0);
+  EXPECT_EQ(FixAssociatingKinetics::metropolis_factor(1.0e6,1.0,true),0.0);
+  EXPECT_EQ(FixAssociatingKinetics::metropolis_factor(-1.0e6,1.0,false),0.0);
+}
+
 TEST_F(AssociatingB1, UnequalDistanceEquilibrium)
 {
   cmd("units lj"); cmd("atom_style atomic"); cmd("atom_modify map yes"); cmd("region b block 0 10 0 10 0 10"); cmd("create_box 1 b");

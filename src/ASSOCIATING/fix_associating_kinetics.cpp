@@ -92,6 +92,11 @@ uint64_t FixAssociatingKinetics::random_value(uint64_t seed, bigint timestep, ta
   uint64_t key=seed^static_cast<uint64_t>(timestep)^(static_cast<uint64_t>(first)<<1)^(static_cast<uint64_t>(second)<<17);
   return ahash(key^stream);
 }
+double FixAssociatingKinetics::attempt_probability(double rate_dt) { return -std::expm1(-rate_dt); }
+double FixAssociatingKinetics::metropolis_factor(double delta_u, double temperature, bool creation) {
+  if (creation) return delta_u <= 0.0 ? 1.0 : std::exp(-delta_u / temperature);
+  return delta_u >= 0.0 ? 1.0 : std::exp(delta_u / temperature);
+}
 void FixAssociatingKinetics::process_sweep(StickerStates &states, std::vector<StickerEdge> &edges, bigint timestep)
 {
   const uint64_t order=UINT64_C(0x4f52444552), accept=UINT64_C(0x414343455054);
@@ -99,7 +104,7 @@ void FixAssociatingKinetics::process_sweep(StickerStates &states, std::vector<St
     uint64_t pa=random_value(seed,timestep,a.first,a.second,order), pb=random_value(seed,timestep,b.first,b.second,order);
     return pa!=pb ? pa<pb : (a.first!=b.first ? a.first<b.first : a.second<b.second);
   });
-  double q=1-std::exp(-nu0*std::exp(-ea/temperature)*nevery*update->dt);
+  double q=attempt_probability(nu0*std::exp(-ea/temperature)*nevery*update->dt);
   for (const auto &edge : edges) {
     auto i=states.find(edge.first), j=states.find(edge.second);
     if (i==states.end() || j==states.end()) continue;
@@ -107,7 +112,7 @@ void FixAssociatingKinetics::process_sweep(StickerStates &states, std::vector<St
     bool cut=i->second.partner==edge.second&&j->second.partner==edge.first;
     if (!make&&!cut) continue;
     double du=pair->delta_u(edge.r);
-    double a=make ? std::min(1.0,std::exp(-du/temperature)) : std::min(1.0,std::exp(du/temperature));
+    double a=metropolis_factor(du,temperature,make);
     if ((random_value(seed,timestep,edge.first,edge.second,accept)>>11)*0x1.0p-53 >= q*a) continue;
     accepted_events.push_back({edge.first,edge.second,i->second.molecule,j->second.molecule,make});
     i->second.partner=make ? edge.second : 0;

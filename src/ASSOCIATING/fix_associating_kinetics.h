@@ -39,6 +39,8 @@ class FixAssociatingKinetics : public Fix {
   void restart(char *) override;
   double memory_usage() override;
   double compute_vector(int) override;
+  static double attempt_probability(double rate_dt);
+  static double metropolis_factor(double delta_u, double temperature, bool creation);
   tagint *partners() const { return partner; }
   const std::vector<Event> &events() const { return accepted_events; }
   std::vector<NetworkEdge> active_network();

@@ -1,0 +1,38 @@
+# Reproducible homogeneous WCA sticker fluid; all variables are set by run_campaign.sh.
+units lj
+atom_style atomic
+boundary p p p
+atom_modify map yes
+variable side equal (${n}/${rho})^(1.0/3.0)
+region box block 0 ${side} 0 ${side} 0 ${side}
+create_box 1 box
+create_atoms 1 random ${n} ${seed} box
+mass 1 1
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1.0 1.0 ${rwca}
+pair_coeff * * associating 30.0 1.5 ${Ee}
+group stickers type 1
+neighbor 0.4 bin
+neigh_modify every 1 delay 0 check yes
+velocity all create ${T} ${seed} mom yes rot yes dist gaussian
+fix int all nve/limit 0.05
+fix bath all langevin ${T} ${T} 1.0 ${seed2} zero yes
+fix kinetics stickers associating/kinetics ${Nevery} ${seed} 0.0 ${Ea} ${T} ${rwca}
+thermo 1000
+thermo_style custom step temp pe etotal
+run ${warmup}
+unfix kinetics
+unfix int
+reset_timestep 0
+fix int all nve
+fix kinetics stickers associating/kinetics ${Nevery} ${seed} ${nu0} ${Ea} ${T} ${rwca}
+variable ndimer equal f_kinetics[1]
+variable nfree equal count(stickers)-2*v_ndimer
+variable cfree equal v_nfree/vol
+variable cdimer equal v_ndimer/vol
+thermo ${sample}
+thermo_style custom step time temp v_nfree v_ndimer v_cfree v_cdimer f_kinetics[2] f_kinetics[3]
+thermo_modify norm no
+fix observ all ave/time ${sample} 1 ${sample} v_nfree v_ndimer v_cfree v_cdimer f_kinetics[2] f_kinetics[3] file ${out} mode scalar ave one format "%16.12g"
+run ${production}
