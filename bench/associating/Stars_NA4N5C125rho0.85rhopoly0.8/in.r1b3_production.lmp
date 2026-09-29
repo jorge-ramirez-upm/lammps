@@ -48,7 +48,10 @@ dump_modify traj sort id
 thermo 1000
 thermo_style custom step temp pe f_kinetics[1] f_kinetics[2] f_kinetics[3]
 thermo_modify norm no
-variable nblock equal v_PROD_STEPS/v_block
+variable nblock equal floor(v_PROD_STEPS/v_block)
+if "${nblock} > 0" then "jump SELF full_loop"
+jump SELF after_full
+label full_loop
 variable i loop ${nblock}
 label loop
 run ${block}
@@ -56,4 +59,9 @@ variable s equal step
 write_associating_network production.network.${s}.dat fix kinetics
 next i
 jump SELF loop
+label after_full
+variable rem equal v_PROD_STEPS-v_nblock*v_block
+if "${rem} > 0" then "run ${rem}"
+variable s equal step
+if "${rem} > 0" then "write_associating_network production.network.${s}.dat fix kinetics"
 write_restart production.restart
