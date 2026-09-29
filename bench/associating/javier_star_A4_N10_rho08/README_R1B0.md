@@ -72,7 +72,7 @@ early-bin online/offline relative difference was 0.782% (all six channels),
 with absolute differences 0.93e-6--5.85e-6. Thus the ordinary KG/WCA system
 passes isotropy and correlator agreement within this prototype's sampling.
 
-The 8-rank, 10,000-step timings were 15.34 s (MD), 18.45 s (per-step
+The cleaned timing benchmark uses no per-step text output in mode 1; rerun the documented three-mode command for host-specific timings.
 pressure), and 18.76 s (pressure plus correlator). Pressure evaluation/global
 reduction costs about 20% over bare MD; the six-scalar multi-tau addition costs
 only about 1.7% beyond that. The pair-virial CTest passed all xx, yy, zz, xy,

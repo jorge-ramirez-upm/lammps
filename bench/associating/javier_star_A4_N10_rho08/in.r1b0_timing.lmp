@@ -20,6 +20,6 @@ fix thermostat all langevin 1.0 1.0 2.0 48279 zero yes
 thermo 10000
 thermo_style custom step temp pe
 thermo_modify norm no
-if "${MODE} == 1" then "compute press all pressure thermo_temp" "fix pressure_sample all ave/time 1 1 1 c_press[1] file ${F}.r1b0.timing.pressure.dat"
+if "${MODE} == 1" then "compute press all pressure thermo_temp" "fix pressure_sample all ave/time 1 1 1 c_press[1] ave one"
 if "${MODE} == 2" then "compute press all pressure thermo_temp" "variable sxy equal c_press[4]" "variable sxz equal c_press[5]" "variable syz equal c_press[6]" "variable nxy equal c_press[1]-c_press[2]" "variable nxz equal c_press[1]-c_press[3]" "variable nyz equal c_press[2]-c_press[3]" "fix corr all ave/correlate/long 1 100000 v_sxy v_sxz v_syz v_nxy v_nxz v_nyz type auto file ${F}.r1b0.timing.gt overwrite ncorr 40"
 run ${nsteps}
