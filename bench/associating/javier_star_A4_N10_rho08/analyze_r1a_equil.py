@@ -3,7 +3,9 @@
 import argparse, csv, glob, re
 p=argparse.ArgumentParser(); p.add_argument('snapshots',nargs='+'); p.add_argument('--out',default='r1a_network_summary.csv'); a=p.parse_args()
 files=sum((glob.glob(x) for x in a.snapshots),[]); rows=[]
-for path in sorted(files):
+def step(path):
+    return int(re.search(r"\.network\.(\d+)\.dat$", path).group(1))
+for path in sorted(files, key=step):
     lines=open(path).read().splitlines(); m=re.search(r'timestep (\d+) bonds (\d+)',lines[0]); selfb=inter=0
     for line in lines[2:]:
         x=line.split()

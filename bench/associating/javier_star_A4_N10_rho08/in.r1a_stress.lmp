@@ -5,7 +5,7 @@ boundary p p p
 special_bonds fene
 atom_modify map yes
 variable prodsteps equal ${PILOT_STEPS}
-read_restart ${F}.r1a.equil.restart
+read_restart ${F}.r1a.equil_cont.restart
 group stickers type 2
 bond_style fene
 bond_coeff 1 30.0 1.5 1.0 1.0
