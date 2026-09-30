@@ -81,3 +81,8 @@ build-k1/
 bench/associating/Stars_NA4N5C125rho0.85rhopoly0.8/r1b3_runs/
 bench/associating/Stars_NA4N5C125rho0.85rhopoly0.8/r1b4_runs/
 bench/associating/javier_star_A4_N10_rho08/r1c1_runs/
+
+bench/associating/javier_star_A4_N10_rho08/Stars_NA4N10C1000rho0.85rhopoly0.8.equilibrated*
+bench/associating/Stars_NA4N5C125rho0.85rhopoly0.8/Stars_NA4N5C125rho0.85rhopoly0.8.equilibrated*
+bench/associating/Stars_NA4N5C125rho0.85rhopoly0.8/r1b32_run/
+bench/associating/Stars_NA4N5C125rho0.85rhopoly0.8/r1b3_smoke_replica00/
