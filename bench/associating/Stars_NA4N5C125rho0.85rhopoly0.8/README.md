@@ -234,3 +234,38 @@ error.  The starting-ensemble/equilibration difference is a viable **C** only
 if the existing raw diagnostics reproduce a corresponding stationary-state
 difference; restart behavior is **B** only if the continuity table demonstrates
 a discontinuity rather than ordinary turnover between non-immediate snapshots.
+
+## R1-B3.2: controlled pressure-compute test
+
+This test deliberately reuses one existing B3 `equil.restart`; it performs no
+equilibration.  The single input defines only `ptotal`, while the multi input
+defines the exact B2 set (`ptotal`, `pke`, `pwca`, `pperm`, and `passoc`).  Both
+write a dedicated `run0.dat` before advancing time, every-step pressure/energy/
+kinetics data, and sorted coordinate/velocity snapshots.  They use identical
+Langevin and kinetics seeds and otherwise identical commands.
+
+```bash
+LMP=/path/to/lmp \
+RESTART=$PWD/r1b3_runs/replica01/equil.restart \
+MPI_NP=8 ./run_r1b32_linux.sh
+cat r1b32_run/comparison.json
+```
+
+`comparison.json` reports the exact per-component maximum total-pressure
+difference, run-zero component-sum residual, mean tensor, mean diagonal
+difference, six population variances, `Cs(0)`, `CN(0)/4`, and `R0`.  It also
+compares the sorted state dumps byte for byte.  The analyzer exits nonzero for a tensor difference above its default `1e-12`
+roundoff tolerance or any state-file difference; `--atol` can set a documented
+alternative tolerance. Bitwise total-tensor equality is reported separately.
+
+The existing B3 restarts and raw outputs are ignored run artifacts and are not
+present in this checkout.  Therefore no B3.2 numerical result is claimed in
+the tracked repository: the exact six run-zero and trajectory differences
+must be read from `comparison.json` produced beside the existing restart.
+If the primary comparison fails, isolate the observer by making four copies of
+the single input and adding, in order, just `pke`, `pwca`, `pperm`, or `passoc`
+(and its columns in `fix raw`), always starting from the same restart with the
+same rank count and seeds.  Do not chain final restarts.  The first one-at-a-
+time case whose total tensor differs identifies the compute requiring a
+smaller reproducer; no physics or virial implementation should be changed on
+the strength of this diagnostic alone.
