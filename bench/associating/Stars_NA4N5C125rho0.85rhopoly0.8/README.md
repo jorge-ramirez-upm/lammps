@@ -155,3 +155,82 @@ as statistical units. It writes per-replica zero-lag ratios and ensemble means,
 SD, and SEM for Cs, CN/4, D, and signal-gated Riso. It must also pass early-lag
 online/offline comparison and equilibration-drift review before assigning the
 A/B/C scientific gate; no R1-B3 outcome is claimed until those runs complete.
+
+## R1-B3.1: zero-lag B2/B3 forensic comparison
+
+No MD is part of this check.  Run the forensic analyzer only where the existing
+ignored raw results are present:
+
+```bash
+python3 analyze_r1b31_zero_lag.py \
+  Stars_NA4N5C125rho0.85rhopoly0.8.r1b2.raw r1b3_runs \
+  --out r1b3_runs/r1b31
+```
+
+The primary calculation is directly from instantaneous samples:
+`Cs0=mean((Pxy^2+Pxz^2+Pyz^2)/3)` and
+`CN0/4=mean(((Pxx-Pyy)^2+(Pxx-Pzz)^2+(Pyy-Pzz)^2)/12)`.
+The FFT value is only an independent lag-zero check.  The three CSV outputs
+contain the compact B2/B3 thermodynamic and tensor-mean table, all consecutive
+100k-step and half-trajectory values, and restart continuity evidence.  The
+online comparison uses the actual zero-lag row of each `production.gt`.
+
+The observed headline values that motivated this check are:
+
+| existing data | independent units | R0 mean | spread |
+|---|---:|---:|---:|
+| B2, one 1M-step trajectory | 100 x 10k blocks | 1.00195 | 0.00297 SEM |
+| B3, six 1M-step replicas | 6 replicas | 0.8782157 | 0.0102303 SD |
+
+The ignored B2/B3 raw outputs are not stored in this source checkout, so the
+individual-replica, window, thermodynamic, online, and continuity rows cannot be
+truthfully reconstructed from the headline aggregate.  Consequently B3.1 is
+**not yet classifiable as A--D from the tracked files alone**.  In particular,
+the aggregate mismatch must not be called D without first demonstrating both
+stationarity and restart continuity.  No finite-time `D(t)` interpretation and
+no R1-B3 gate follows from this observation.
+
+### Side-by-side input audit
+
+The following is the complete list of input differences that can affect the
+sampled ensemble or the reported total tensor; output-only differences are
+included explicitly so that they are not mistaken for physics changes.
+
+* **Starting ensemble:** B2 reads the already associated
+  `${F}.r1b1.equil.restart`; B3 equilibration reads the original unassociated
+  `${DATA}`, creates new Gaussian velocities, runs 500k steps, and production
+  reads that replica's `equil.restart`.  Thus starting coordinates, velocities,
+  transient network, and amount/history of equilibration differ.
+* **Random streams:** B2 uses fixed Langevin/kinetics seeds 58280/592846.  Each
+  B3 replica supplies distinct velocity/Langevin/kinetics seeds.  Production
+  reuses its replica's named Langevin and kinetics seed when restoring fixes.
+* **Image handling:** B3 equilibration calls `reset_atoms image stars`; B2 does
+  not.  This changes image flags/unwrapped output, and should not change wrapped
+  forces or the pressure tensor, but is retained as a protocol difference.
+* **Time origin and staging:** B2 resets the timestep after reading its restart.
+  B3 equilibration does not explicitly reset it; B3 production resets it after
+  reading the staged restart.  B3 has an explicit equilibration-to-production
+  restart boundary that B2 does not have within its measured trajectory.
+* **Tensor definition:** B2's `compute ptotal all pressure thermo_temp` and
+  B3's `compute press all pressure thermo_temp` request the same total pressure
+  definition.  B2 additionally computes selected kinetic, WCA, permanent-bond,
+  and associating tensors; these diagnostic computes do not alter forces.
+* **Sampling/output fixes:** both write instantaneous total tensor values every
+  step. B2 also writes PE and kinetics counters in the same row and takes
+  network/coordinate snapshots every 10k. B3 writes temperature, PE, and
+  counters every 1k in a separate diagnostic file, takes the same 10k
+  snapshots, and runs `ave/correlate/long`. These are output/sampling
+  differences, not changes to the pressure tensor.
+* **Run organization:** B2's loop assumes an integral number of 10k blocks.
+  B3 supports a final remainder and has separate equilibration and production
+  loops.  At the present 1M/500k lengths there is no remainder.
+
+Everything else that controls dynamics is identical in the three inputs:
+units, atom style, boundaries, special bonds, FENE and WCA/associating
+coefficients, neighbor/communication settings, timestep, NVE plus Langevin
+(T=1, damping=2, zero net random force), and associating kinetics parameters.
+Therefore none of the audited text alone establishes a pressure-definition
+error.  The starting-ensemble/equilibration difference is a viable **C** only
+if the existing raw diagnostics reproduce a corresponding stationary-state
+difference; restart behavior is **B** only if the continuity table demonstrates
+a discontinuity rather than ordinary turnover between non-immediate snapshots.
