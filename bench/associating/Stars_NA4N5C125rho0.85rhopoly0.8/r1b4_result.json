@@ -1,0 +1,39 @@
+{
+  "experiment": "R1-B4",
+  "model": "Stars_NA4N5C125rho0.85rhopoly0.8",
+  "replicas": 6,
+  "protocol": {
+    "equil_steps": 500000,
+    "production_steps": 1000000,
+    "dt": 0.01,
+    "raw_channels": 6,
+    "statistics_units": "six independent replicas"
+  },
+  "R0_per_replica": [
+    0.9956639999403593,
+    1.0026420258492572,
+    1.0007227907572014,
+    0.9988301122553603,
+    0.9946786282936168,
+    0.9994714598758916
+  ],
+  "R0_mean": 0.9986681694952811,
+  "R0_sd": 0.003020793851277885,
+  "status": "ok",
+  "useful_lags": 135693,
+  "useful_time_first": 0.0,
+  "useful_time_last": 10000.99,
+  "max_abs_D_over_sem": 40.56626411040932,
+  "max_time": 651.74,
+  "max_D": -2.3599642038488034e-05,
+  "fraction_within_1": 0.44681744821029823,
+  "fraction_within_2": 0.7683447193296633,
+  "max_significant_same_sign_lags": 12,
+  "max_significant_same_sign_time": 30.05,
+  "sustained_same_sign_nonzero": false,
+  "online_max_abs": 0.0013034363195487493,
+  "online_max_rel": 4707.576051331958,
+  "online_max_rel_interpretation": "diagnostic only; unstable near zero crossings",
+  "classification": "A: corrected virial restores isotropy",
+  "conclusion": "Riso(0)=0.9986681694952811 +/- 0.003020793851277885; no sustained same-sign nonzero D(t) detected; reduced-system stress-validation phase closed."
+}

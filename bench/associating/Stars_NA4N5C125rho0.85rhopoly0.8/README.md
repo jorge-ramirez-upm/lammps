@@ -9,6 +9,16 @@ its component `compute pressure ... pair/hybrid` objects forced explicit
 virial tallies. R1-B4 is the first independent-ensemble rheology/isotropy
 test after the corrected virial implementation.
 
+The original total-pressure-only route let `PairHybrid` use global `F.r`.
+`PairAssociating` instead applies forces through dynamic partner links and
+minimum-image displacements and already performs explicit `ev_tally_full()`
+virial tallying. The missing `no_virial_fdotr_compute = 1` therefore made the
+hybrid total virial inconsistent. A component such as
+`compute passoc all pressure NULL pair/hybrid associating` disabled `F.r`,
+which is why the earlier B2 decomposition accidentally used the correct
+explicit tally. The fix changes stress bookkeeping only: forces, association
+kinetics, detailed balance, and MD trajectories are unchanged.
+
 This diagnostic system has 2,789 atoms: 125 A=4, N=5 stars (2,625 polymer
 beads including 500 type-2 stickers), 2,500 permanent FENE bonds, and 164
 solvent beads.  It uses the validated R1-A association model: WCA, KG FENE
@@ -301,5 +311,46 @@ The analyzer treats the six replicas as the only statistical units, reports
 per-replica `Riso(0)`, ensemble mean/SD, SEM for `Cs`, `CN/4`, and `D`, the
 useful lag range, maximum `|D|/SEM(D)`, fractions within one and two SEM, and
 significant same-sign runs. It compares early offline FFT lags with each
-replica's online multi-tau output. No R1-B4 scientific conclusion is claimed
-until the dedicated-host runs finish.
+replica's online multi-tau output. The relative online error is diagnostic-only
+near zero crossings, and the maximum pointwise `|D|/SEM(D)` is a scan statistic,
+not an isotropy gate.
+
+### Final result
+
+The corrected six-replica run completed successfully. The compact tracked
+result is `r1b4_result.json`; raw stress, restart, network, and trajectory
+artifacts remain ignored. The six zero-lag ratios are:
+
+```text
+0.9956639999403593  1.0026420258492572  1.0007227907572014
+0.9988301122553603  0.9946786282936168  0.9994714598758916
+```
+
+Thus
+
+```text
+Riso(0) = 0.9986681694952811 +/- 0.003020793851277885
+```
+
+The result is fully compatible with isotropy. No sustained same-sign nonzero
+`D(t)=CN(t)/4-Cs(t)` remains: the longest significant same-sign run is 12
+lags, while the useful lag range is 0--10000.99 time units. The largest
+pointwise `|D|/SEM(D)` is 40.57 at `t=651.74`, but its absolute difference is
+only `2.36e-5`; neighboring lags are strongly correlated and only six
+replicas estimate the SEM. The fractions within one and two SEM are
+descriptive, not independent Gaussian coverage tests. Classification:
+**A — corrected virial restores isotropy.** The reduced-system
+stress-validation phase is closed.
+
+The first B4 attempt used a stale dedicated-host executable: the source was
+fixed, but the binary had not been rebuilt, and its `production.raw` was
+byte-for-byte identical to old B3. After rebuilding, the corrected rerun gave
+the result above. Operational rule: every future source change under `src/`
+requires recompilation before scientific execution. New B4 completion markers
+record the repository Git SHA and LAMMPS executable SHA-256.
+
+The old total-pressure-only stress/rheology conclusions, especially R1-A,
+R1-B1, and the original R1-B3, are superseded. Their molecular trajectories
+remain valid. B2 remains useful as a forensic diagnostic because its component
+pressure computes forced explicit virial tallying. This closes R1-B4 only; it
+does not begin R1-C.

@@ -202,6 +202,8 @@ def main():
         )
     summary["online_max_abs"] = None if not online_abs else float(max(online_abs))
     summary["online_max_rel"] = None if not online_rel else float(max(online_rel))
+    summary["online_max_rel_note"] = "diagnostic only; unstable near zero crossings"
+    summary["max_abs_D_over_sem_note"] = "descriptive scan statistic, not an isotropy gate"
     with open(args.out + ".summary.csv", "w", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=summary)
         writer.writeheader()
