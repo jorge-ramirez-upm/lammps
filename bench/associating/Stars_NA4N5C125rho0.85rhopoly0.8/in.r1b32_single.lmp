@@ -1,0 +1,50 @@
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+variable STEPS index 10000
+variable STATE_EVERY index 1000
+variable LANGEVIN_SEED index 284729
+variable KINETICS_SEED index 384729
+read_restart ${RESTART}
+group stickers type 2
+bond_style fene
+bond_coeff 1 30 1.5 1 1
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1 1 ${rwca}
+pair_coeff * * associating 30 1.5 8
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+fix integrate all nve
+fix thermostat all langevin 1 1 2 ${LANGEVIN_SEED} zero yes
+fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10 4 1 ${rwca}
+reset_timestep 0
+
+compute ptotal all pressure thermo_temp
+thermo_style custom step c_ptotal[1] c_ptotal[2] c_ptotal[3] c_ptotal[4] c_ptotal[5] c_ptotal[6]
+thermo_modify norm no
+thermo 1
+run 0
+print "# step total_xx total_yy total_zz total_xy total_xz total_yz" file run0.dat screen no
+print "$(step) $(c_ptotal[1]) $(c_ptotal[2]) $(c_ptotal[3]) $(c_ptotal[4]) $(c_ptotal[5]) $(c_ptotal[6])" append run0.dat screen no
+
+variable st equal step
+variable pe_now equal pe
+variable active equal f_kinetics[1]
+variable created equal f_kinetics[2]
+variable broken equal f_kinetics[3]
+variable t1 equal c_ptotal[1]
+variable t2 equal c_ptotal[2]
+variable t3 equal c_ptotal[3]
+variable t4 equal c_ptotal[4]
+variable t5 equal c_ptotal[5]
+variable t6 equal c_ptotal[6]
+fix raw all print 1 "${st} ${pe_now} ${active} ${created} ${broken} ${t1} ${t2} ${t3} ${t4} ${t5} ${t6}" file pressure.raw screen no title "# step pe active created broken total_xx total_yy total_zz total_xy total_xz total_yz"
+dump state all custom ${STATE_EVERY} state.lammpstrj id type x y z vx vy vz
+dump_modify state sort id
+run ${STEPS}
+write_restart final.restart
