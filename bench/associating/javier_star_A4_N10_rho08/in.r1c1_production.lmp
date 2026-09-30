@@ -1,0 +1,51 @@
+# R1-C1 corrected-virial full-system equilibrium stress pilot.
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+read_restart ${RESTART}
+group stickers type 2
+group stars type 1 2
+bond_style fene
+bond_coeff 1 30.0 1.5 1.0 1.0
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1.0 1.0 ${rwca}
+pair_coeff * * associating 30.0 1.5 8.0
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+fix integrate all nve
+fix thermostat all langevin 1.0 1.0 2.0 ${LANGEVIN_SEED} zero yes
+fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10.0 4.0 1.0 ${rwca}
+reset_timestep 0
+
+# compute pressure order is xx yy zz xy xz yz; PairAssociating uses its
+# explicit partner/minimum-image virial tally under the corrected binary.
+compute press all pressure thermo_temp
+variable pxx equal c_press[1]
+variable pyy equal c_press[2]
+variable pzz equal c_press[3]
+variable pxy equal c_press[4]
+variable pxz equal c_press[5]
+variable pyz equal c_press[6]
+variable st equal step
+fix raw all print 1 "${st} ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz}" file production.raw screen no title "# step Pxx Pyy Pzz Pxy Pxz Pyz"
+
+variable nxy equal c_press[1]-c_press[2]
+variable nxz equal c_press[1]-c_press[3]
+variable nyz equal c_press[2]-c_press[3]
+fix corr all ave/correlate/long 1 100000 v_pxy v_pxz v_pyz v_nxy v_nxz v_nyz type auto file production.gt overwrite ncorr 40
+variable t equal temp
+variable ep equal pe
+fix diagnostics all ave/time 1000 1 1000 v_t v_ep c_press[1] c_press[2] c_press[3] c_press[4] c_press[5] c_press[6] f_kinetics[1] file production.diagnostics mode scalar ave one
+
+if "${TRAJ_GZ} == 1" then "dump traj stars custom/gz ${TRAJ_EVERY} production.lammpstrj.gz id mol type xu yu zu" else "dump traj stars custom ${TRAJ_EVERY} production.lammpstrj id mol type xu yu zu"
+dump_modify traj sort id
+thermo 1000
+thermo_style custom step temp pe c_press[1] c_press[2] c_press[3] c_press[4] c_press[5] c_press[6] f_kinetics[1]
+thermo_modify norm no
+run ${PROD_STEPS}
+write_restart production.restart

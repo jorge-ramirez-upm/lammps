@@ -39,3 +39,50 @@ The thermo columns after energy are `f_kinetics[1]` active transient bonds,
 `f_kinetics[2]` cumulative creations, and `f_kinetics[3]` cumulative breaks.
 The 5,000-step run is a short validation (50 chemical sweeps), not a
 production benchmark.
+
+## R1-C1: corrected-virial full-system equilibrium rheology pilot
+
+R1-C1 is a single full-system stress-correlation pilot after the
+`PairAssociating::no_virial_fdotr_compute = 1` correction. It preserves the
+1,000-star, `N=10`, `rho_poly=0.8`, `rho=0.85` model, `Ee=8`, `Ea=4`, `T=1`,
+`dt=0.01`, `Nevery=100`, `r_assoc=2^(1/6)`, `nu0=10`, and Langevin damping 2.
+The pilot defaults to 100,000 equilibration steps when starting from the
+original no-transient-bond data and 1,000,000 production steps, with raw six
+component pressure every step, online `fix ave/correlate/long`, unwrapped type
+1/2 coordinates, and network snapshots every 10,000 steps.
+
+If the validated associating continuation restart
+`Stars_NA4N10C1000rho0.85rhopoly0.8.equilibrated.r1a.equil_cont.restart` is
+present, the launcher reuses it by default and records that choice. This
+avoids unnecessary re-equilibration; set `REUSE_RESTART=0` to perform the
+100,000-step fresh equilibration. R1-C1 never reuses old stress files.
+
+Run on the dedicated Linux host:
+
+```bash
+LMP=~/lammps/build-r1a/lmp \
+MPI_NP=8 EQUIL_STEPS=100000 PROD_STEPS=1000000 \
+./run_r1c1_linux.sh
+./status_r1c1.sh
+python3 analyze_r1c1_full_rheology.py \
+  r1c1_runs/production/production.raw \
+  --online r1c1_runs/production/production.gt \
+  --out r1c1_runs/r1c1
+```
+
+The analyzer validates the seven-column raw format, computes `Cs`, `CN/4`,
+`D`, the rotationally averaged `G(t)`, zero-lag `R_iso`, pressure means,
+diagnostic modulus crossings, a cumulative Green--Kubo integral, a tail noise
+floor, and an explicitly diagnostic plateau check. It compares early offline
+lags with the online multi-tau file. It does not claim a zero-shear viscosity
+from this single trajectory; its purpose is to decide whether R1-C2 needs
+multiple replicas, longer trajectories, or both.
+
+Every output root records the repository Git SHA, executable path and
+SHA-256, MPI rank count, seeds, run lengths, cadence, start state, and
+trajectory mode. Completion markers must match that identity exactly; a
+configuration or executable change requires a new output root. The launcher
+uses compressed polymer trajectories when the executable advertises
+`COMPRESS`, otherwise it falls back to plain text. This prevents the stale
+executable incident seen before R1-B4. Any future source change under `src/`
+requires rebuilding the executable before running R1-C1.
