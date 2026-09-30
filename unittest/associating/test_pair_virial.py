@@ -29,3 +29,34 @@ for label,a,b in zip(('xx','yy','zz','xy','xz','yz'),got,expected):
     assert math.isclose(a,b,rel_tol=2e-6,abs_tol=2e-6),(label,a,b,p.stdout)
 for label,a,b in zip(('xx','yy','zz','xy','xz','yz'),got,component):
     assert math.isclose(a,b,rel_tol=0.,abs_tol=1e-12),(label,a,b,p.stdout)
+
+def run_hybrid(with_components):
+    components = '''
+compute plj all pressure NULL pair/hybrid lj/cut
+compute passoc all pressure NULL pair/hybrid associating
+''' if with_components else ''
+    deck=f'''units lj
+atom_style atomic
+atom_modify map yes
+region box block 0 10 0 10 0 10
+create_box 1 box
+create_atoms 1 single 4 5 6
+create_atoms 1 single 4.3 5.4 5.5
+mass 1 1
+pair_style hybrid/overlay lj/cut 2.0 associating
+pair_coeff * * lj/cut 1 1 2.0
+pair_coeff * * associating 30 1.5 1
+fix a all associating/kinetics debug_pair 1 2
+compute ptotal all pressure NULL virial
+{components}thermo_modify norm no
+thermo_style custom step c_ptotal[1] c_ptotal[2] c_ptotal[3] c_ptotal[4] c_ptotal[5] c_ptotal[6]
+run 0
+'''
+    p=subprocess.run([lmp,'-log','none'],input=deck,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    assert p.returncode==0,p.stdout
+    line=next(x for x in p.stdout.splitlines() if re.match(r'^\s*0\s',x))
+    return [float(x) for x in line.split()[1:7]]
+
+single=run_hybrid(False); multi=run_hybrid(True)
+for label,a,b in zip(('xx','yy','zz','xy','xz','yz'),single,multi):
+    assert math.isclose(a,b,rel_tol=0.,abs_tol=1e-12),(label,a,b)

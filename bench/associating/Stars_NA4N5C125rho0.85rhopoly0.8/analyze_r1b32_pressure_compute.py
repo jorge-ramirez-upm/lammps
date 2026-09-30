@@ -80,6 +80,7 @@ def main():
         "single_Cs0": float(cs_s), "multi_Cs0": float(cs_m),
         "Cs0_difference": float(cs_m - cs_s),
         "single_CN0_over_4": float(cn_s), "multi_CN0_over_4": float(cn_m),
+        "CN0_over_4_difference": float(cn_m - cn_s),
         "single_R0": float(ratio_s), "multi_R0": float(ratio_m),
         "R0_difference": float(ratio_m - ratio_s),
     }
@@ -87,7 +88,12 @@ def main():
     print(json.dumps(result, indent=2, sort_keys=True))
     run0_bad = run0_delta is not None and (np.max(np.abs(run0_delta)) > args.atol or
                                             np.max(np.abs(run0_reconstruction)) > args.atol)
-    if result["max_abs_total_difference"] > args.atol or state_equal is False or run0_bad:
+    metrics_bad = (abs(result["Cs0_difference"]) > args.atol or
+                   abs(result["CN0_over_4_difference"]) > args.atol or
+                   abs(result["R0_difference"]) > args.atol)
+    if (result["max_abs_total_difference"] > args.atol or
+        result["max_abs_reconstruction_residual"] > args.atol or
+        state_equal is False or run0_bad or metrics_bad):
         raise SystemExit("single and multi cases differ; add component computes one at a time")
 
 

@@ -13,7 +13,11 @@
 using namespace LAMMPS_NS;
 
 PairAssociating::PairAssociating(LAMMPS *lmp) : Pair(lmp), k(0), r0(0), ee(0), rstar(0), shift(0), coeff_set(0), fix(nullptr)
-{ restartinfo=0; single_enable=0; }
+{
+  restartinfo=0; single_enable=0;
+  // Explicit partner/minimum-image forces require the explicit virial tally, not hybrid F.r.
+  no_virial_fdotr_compute = 1;
+}
 PairAssociating::~PairAssociating()
 {
   if (allocated) { memory->destroy(setflag); memory->destroy(cutsq); }
