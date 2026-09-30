@@ -1,5 +1,14 @@
 # R1-B1: reduced associating stress-isotropy validation
 
+## Virial bookkeeping correction
+
+The old R1-A, R1-B1, and R1-B3 stress results that used only the total-pressure
+route are invalidated by the associating virial bookkeeping bug. Their MD
+trajectories and forces are not invalidated. R1-B2 appeared correct because
+its component `compute pressure ... pair/hybrid` objects forced explicit
+virial tallies. R1-B4 is the first independent-ensemble rheology/isotropy
+test after the corrected virial implementation.
+
 This diagnostic system has 2,789 atoms: 125 A=4, N=5 stars (2,625 polymer
 beads including 500 type-2 stickers), 2,500 permanent FENE bonds, and 164
 solvent beads.  It uses the validated R1-A association model: WCA, KG FENE
@@ -269,3 +278,28 @@ same rank count and seeds.  Do not chain final restarts.  The first one-at-a-
 time case whose total tensor differs identifies the compute requiring a
 smaller reproducer; no physics or virial implementation should be changed on
 the strength of this diagnostic alone.
+
+## R1-B4: corrected-virial independent stress ensemble
+
+R1-B4 repeats the six-replica B3 protocol from the original unassociated data
+file, using the corrected binary and a separate `r1b4_runs/` output root. It
+uses the frozen B3 seed table, 500000 equilibration steps, 1000000 production
+steps, `dt=0.01`, every-step six-channel raw stress, online
+`fix ave/correlate/long`, and 10000-step network/trajectory diagnostics.
+Replicas run sequentially by default; set `PARALLEL_REPLICAS` for bounded
+concurrency.
+
+```bash
+LMP=~/lammps/build-r1a/lmp \
+MPI_NP=8 EQUIL_STEPS=500000 PROD_STEPS=1000000 \
+./run_r1b4_linux.sh
+./status_r1b4.sh
+python3 analyze_r1b4_ensemble.py r1b4_runs --out r1b4_runs/r1b4
+```
+
+The analyzer treats the six replicas as the only statistical units, reports
+per-replica `Riso(0)`, ensemble mean/SD, SEM for `Cs`, `CN/4`, and `D`, the
+useful lag range, maximum `|D|/SEM(D)`, fractions within one and two SEM, and
+significant same-sign runs. It compares early offline FFT lags with each
+replica's online multi-tau output. No R1-B4 scientific conclusion is claimed
+until the dedicated-host runs finish.

@@ -97,6 +97,8 @@ def main():
     parser.add_argument("runs", nargs="?", default="r1b3_runs")
     parser.add_argument("--out", default="r1b3")
     parser.add_argument("--dt", type=float, default=0.01)
+    parser.add_argument("--sustained-min-lags", type=int, default=1000,
+                        help="minimum consecutive significant lags for sustained-sign reporting")
     args = parser.parse_args()
     if args.dt <= 0:
         parser.error("--dt must be positive")
@@ -161,6 +163,8 @@ def main():
         "R0_mean": float(np.mean([check["R0"] for check in checks])),
         "R0_sd": float(np.std([check["R0"] for check in checks], ddof=1)),
     }
+    online_abs = [check["online_max_abs"] for check in checks if "online_max_abs" in check]
+    online_rel = [check["online_max_rel"] for check in checks if "online_max_rel" in check]
     if not np.any(good):
         summary.update(status="insufficient ensemble precision", useful_lags=0)
     else:
@@ -171,12 +175,33 @@ def main():
         useful_indices = np.flatnonzero(good)
         maximum = int(np.argmax(sig))
         i = useful_indices[maximum]
+        significant = good & (np.abs(dm) > 2 * de)
+        max_run = run = 0
+        max_run_start = None
+        for j in np.flatnonzero(significant):
+            if run and j == previous + 1 and np.sign(dm[j]) == np.sign(dm[previous]):
+                run += 1
+            else:
+                run = 1
+                run_start = j
+            if run > max_run:
+                max_run = run
+                max_run_start = run_start
+            previous = j
         summary.update(
             status="ok", useful_lags=int(good.sum()),
+            useful_time_first=float(useful_indices[0] * args.dt),
+            useful_time_last=float(useful_indices[-1] * args.dt),
             max_abs_D_over_sem=float(sig[maximum]), max_time=i * args.dt,
             max_D=float(dm[i]), fraction_within_1=float(np.mean(sig <= 1)),
             fraction_within_2=float(np.mean(sig <= 2)),
+            max_significant_same_sign_lags=int(max_run),
+            max_significant_same_sign_time=(None if max_run_start is None else
+                                            float(max_run_start * args.dt)),
+            sustained_same_sign_nonzero=bool(max_run >= args.sustained_min_lags),
         )
+    summary["online_max_abs"] = None if not online_abs else float(max(online_abs))
+    summary["online_max_rel"] = None if not online_rel else float(max(online_rel))
     with open(args.out + ".summary.csv", "w", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=summary)
         writer.writeheader()
