@@ -29,7 +29,7 @@ compute pke all pressure thermo_temp ke
 compute pwca all pressure NULL pair/hybrid lj/cut
 compute pperm all pressure NULL bond
 compute passoc all pressure NULL pair/hybrid associating
-thermo_style custom step c_ptotal[*] c_pke[*] c_pwca[*] c_pperm[*] c_passoc[*]
+thermo_style custom step pe c_ptotal[*] c_pke[*] c_pwca[*] c_pperm[*] c_passoc[*]
 thermo_modify norm no
 thermo 1
 run 0

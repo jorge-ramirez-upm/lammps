@@ -25,7 +25,7 @@ fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10 4 1 ${rwca}
 reset_timestep 0
 
 compute ptotal all pressure thermo_temp
-thermo_style custom step c_ptotal[1] c_ptotal[2] c_ptotal[3] c_ptotal[4] c_ptotal[5] c_ptotal[6]
+thermo_style custom step pe c_ptotal[1] c_ptotal[2] c_ptotal[3] c_ptotal[4] c_ptotal[5] c_ptotal[6]
 thermo_modify norm no
 thermo 1
 run 0
