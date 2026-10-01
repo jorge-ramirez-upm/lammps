@@ -1,0 +1,31 @@
+# Pre-R1-C2 event-logging performance benchmark. This input never resets the
+# timestep after read_restart: event timestamps must remain continuation-safe.
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+read_restart ${RESTART}
+group stickers type 2
+group stars type 1 2
+bond_style fene
+bond_coeff 1 30.0 1.5 1.0 1.0
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1.0 1.0 ${rwca}
+pair_coeff * * associating 30.0 1.5 8.0
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+fix integrate all nve
+fix thermostat all langevin 1.0 1.0 2.0 ${LANGEVIN_SEED} zero yes
+if "${LOGGING} == 1" then "fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10.0 4.0 1.0 ${rwca} timing event_log ${EVENT_LOG}" else "fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10.0 4.0 1.0 ${rwca} timing"
+run 0
+write_associating_network ${INITIAL_NETWORK} fix kinetics
+compute benchmark_press all pressure thermo_temp
+thermo 100000
+thermo_style custom step temp pe c_benchmark_press[1] c_benchmark_press[2] c_benchmark_press[3] f_kinetics[1] f_kinetics[2] f_kinetics[3]
+run ${STEPS}
+write_associating_network ${FINAL_NETWORK} fix kinetics
+write_restart ${FINAL_RESTART}

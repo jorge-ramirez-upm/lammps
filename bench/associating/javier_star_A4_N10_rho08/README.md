@@ -86,3 +86,36 @@ uses compressed polymer trajectories when the executable advertises
 `COMPRESS`, otherwise it falls back to plain text. This prevents the stale
 executable incident seen before R1-B4. Any future source change under `src/`
 requires rebuilding the executable before running R1-C1.
+
+## Pre-R1-C2 event logging gate
+
+Sparse network snapshots cannot resolve short sticker detachment and
+reattachment flickers, so the kinetics fix can optionally record each accepted
+creation or break directly from its existing replicated global sweep:
+
+```
+fix kinetics stickers associating/kinetics 100 492845 10.0 4.0 1.0 ${rwca} \
+  event_log r1c2/events.dat
+```
+
+The file is written only by rank 0, is opened once with buffered output, and
+contains `timestep event_type sticker_i sticker_j molecule_i molecule_j`, with
+`event_type` equal to `C` or `B` and canonical `sticker_i < sticker_j`.
+An event stream must be combined with an initial active network. Capture that
+state with the existing traversal before the run:
+
+```
+write_associating_network r1c2/initial.network fix kinetics
+```
+
+The event stream is a bare accepted-event history; it is not Javier's
+renormalized bond lifetime by itself. Replay begins from the initial network
+and applies events sequentially, so temporary detachments followed by
+reattachment to the same partner can be recognized later.
+
+The instrumentation gate is prepared but not yet evaluated on the dedicated
+host. Run `benchmark_r1c2_event_logging.sh` with a rebuilt executable and the
+trusted R1-C1 restart. It performs one warm-up and alternating OFF/ON
+measurements, keeps outputs separate, records executable provenance, and applies
+the provisional <=2% PASS, <=5% ACCEPTABLE, >5% FAIL/redesign thresholds.
+No long R1-C2 production run is authorized by this section.
