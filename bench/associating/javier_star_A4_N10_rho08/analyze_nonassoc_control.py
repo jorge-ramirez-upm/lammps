@@ -102,8 +102,11 @@ def _rheology_rows(raw, durations, cutoffs, blocks, volume, temperature, dt, max
                                  if row["blocks"] == n and row["G_sd_over_abs_mean"] is not None
                                  and row["G_sd_over_abs_mean"] >= 1.0), None) for n in blocks}
     tail_bins = coarse_tail_bins(block_rows, blocks, 0.1, max_lag, 20)
-    terminal = terminal_diagnostic(tail_bins, block_rows, blocks)
-    return duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, tail_bins, terminal
+    full_g0 = float(r1c1._modulus(raw, volume, temperature, dt)[4][0])
+    terminal = terminal_diagnostic(tail_bins, block_rows, blocks, full_g0)
+    duration_convergence = fixed_cutoff_duration_convergence(cutoff_rows)
+    return (duration_summary, duration_rows, cutoff_rows, block_rows, block_summary,
+            uncertainty, tail_bins, terminal, duration_convergence)
 
 
 def _first_lag(rows, predicate):
@@ -145,7 +148,7 @@ def coarse_tail_bins(block_rows, blocks, start, stop, count):
     return result
 
 
-def terminal_diagnostic(tail_bins, block_rows, blocks):
+def terminal_diagnostic(tail_bins, block_rows, blocks, full_g0):
     """Describe the slow stress tail without asserting a single terminal time."""
     preferred = 5 if 5 in blocks else (max(blocks) if blocks else None)
     rows = sorted((row for row in tail_bins if row["blocks"] == preferred), key=lambda row: row["lag_start"])
@@ -188,11 +191,10 @@ def terminal_diagnostic(tail_bins, block_rows, blocks):
                 by_block[row["block"]] = row
             eta = np.asarray([row["eta"] for row in by_block.values()])
             mean = float(eta.mean()); sd = float(eta.std(ddof=1)) if len(eta) > 1 else 0.0
-            g0 = rows[0]["G_mean"]
-            if g0 > 0:
-                integral = {"cutoff": float(resolved_end), "tau_int": mean / g0,
-                            "tau_int_sem": sd / math.sqrt(len(eta)) / g0 if len(eta) > 1 else 0.0,
-                            "definition": "block mean cumulative integral divided by G(0), truncated when block mean first falls below its SEM"}
+            if full_g0 > 0:
+                integral = {"cutoff": float(resolved_end), "tau_int": mean / full_g0,
+                            "tau_int_sem": sd / math.sqrt(len(eta)) / full_g0 if len(eta) > 1 else 0.0,
+                            "definition": "block mean cumulative integral divided by the full trajectory zero-lag G(0), truncated when the coarse block mean first falls below its SEM; descriptive, not terminal"}
     return {"status": "descriptive_only", "block_scheme": preferred,
             "first_G_below_block_SEM": below_sem,
             "first_G_below_block_SD": below_sd,
@@ -242,6 +244,63 @@ def fixed_cutoff_stability(cutoff_rows):
             "largest_contiguous_stable_cutoff": max(contiguous) if contiguous else None,
             "individually_stable_cutoffs": individually_stable,
             "isolated_later_passes_non_converged": isolated}
+
+
+def fixed_cutoff_duration_convergence(cutoff_rows, tolerances=(0.10, 0.15, 0.25)):
+    """Find the first prefix after which all longer safe prefixes agree."""
+    result = []
+    for cutoff in sorted({row["cutoff"] for row in cutoff_rows}):
+        rows = sorted((row for row in cutoff_rows if row["source"] == "nested" and
+                       row["cutoff"] == cutoff and row["safe_lag_fraction"] <= 0.2),
+                      key=lambda row: row["duration"])
+        longest = rows[-1] if rows else None
+        output = {"cutoff": float(cutoff), "T_longest": longest["duration"] if longest else None,
+                  "eta_from_longest_T": longest["eta_cutoff"] if longest else None,
+                  "T_over_cutoff": (longest["duration"] / cutoff) if longest else None}
+        for tolerance in tolerances:
+            key = f"T_min_{int(round(tolerance * 100))}pct"
+            selected = None
+            for index, candidate in enumerate(rows):
+                values = np.asarray([row["eta_cutoff"] for row in rows[index:]])
+                scale = max(abs(float(values.mean())), 1e-30)
+                if len(values) >= 2 and (values.max() - values.min()) / scale <= tolerance:
+                    selected = candidate["duration"]
+                    break
+            output[key] = selected
+            output[f"T_min_over_cutoff_{int(round(tolerance * 100))}pct"] = (selected / cutoff if selected else None)
+        block = [row for row in cutoff_rows if row["source"] == "blocks" and
+                 row["cutoff"] == cutoff and row["safe_lag_fraction"] <= 0.2]
+        output["block_SEM"] = (max(row["eta_sem"] for row in block) if block else None)
+        result.append(output)
+    return result
+
+
+def cutoff_plateau(duration_convergence, tolerance=0.25, minimum_cutoffs=3):
+    """Test a cutoff plateau only among duration-converged, block-resolved values."""
+    usable = [row for row in duration_convergence
+              if row["T_min_25pct"] is not None and row["block_SEM"] is not None]
+    usable.sort(key=lambda row: row["cutoff"])
+    runs = []
+    current = []
+    for row in usable:
+        trial = current + [row]
+        values = np.asarray([item["eta_from_longest_T"] for item in trial])
+        stable = (values.max() - values.min()) / max(abs(float(values.mean())), 1e-30) <= tolerance
+        if stable:
+            current = trial
+        else:
+            if current:
+                runs.append(current)
+            current = [row]
+    if current:
+        runs.append(current)
+    plateau = max(runs, key=len) if runs else []
+    exists = len(plateau) >= minimum_cutoffs
+    return {"criteria": "duration-converged at 25%, block SEM available, and span across contiguous tested cutoffs <= 25%",
+            "usable_cutoffs": [row["cutoff"] for row in usable],
+            "plateau_exists": exists,
+            "plateau_cutoffs": [row["cutoff"] for row in plateau] if exists else [],
+            "eta0_status": "supported descriptively" if exists else "not established"}
 
 
 def _open_dump(path):
@@ -407,6 +466,7 @@ def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
                    "D_candidate_stable": stable,
                    "alpha_in_requested_windows": _alpha_window_stats(time, alpha, alpha_windows),
                    "strict_asymptotic_window": strict,
+                   "strict_exponent_criterion_passed": bool(strict is not None),
                    "asymptotic_fickian_confirmed": bool(strict is not None),
                    "D_fit_max_fraction_of_total_lag": max_fraction,
                    "fickian_onset": onset, "fickian_window_end": end,
@@ -431,7 +491,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--dt", type=float, default=0.01)
     parser.add_argument("--durations", default="100,250,500,1000,2500,5000")
-    parser.add_argument("--cutoffs", default="1,2,5,10,20,50,100,200")
+    parser.add_argument("--cutoffs", default="1,2,5,10,20,50,100,200,300,500,750,1000")
     parser.add_argument("--blocks", default="4,5,10")
     parser.add_argument("--max-lag", type=float, default=200.0)
     parser.add_argument("--assoc-correlations")
@@ -441,9 +501,11 @@ def main():
     durations = [float(x) for x in args.durations.split(",") if x]
     cutoffs = [float(x) for x in args.cutoffs.split(",") if x]
     blocks = [int(x) for x in args.blocks.split(",") if x]
-    duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, tail_bins, terminal = _rheology_rows(
+    (duration_summary, duration_rows, cutoff_rows, block_rows, block_summary,
+     uncertainty, tail_bins, terminal, duration_convergence) = _rheology_rows(
         raw, durations, cutoffs, blocks, args.volume, args.temperature, args.dt, args.max_lag)
     cutoff_stability = fixed_cutoff_stability(cutoff_rows)
+    plateau = cutoff_plateau(duration_convergence)
     frame_data = list(com_frames(args.com_output, expected_stars=args.stars))
     if not frame_data:
         raise ValueError("no trajectory frames")
@@ -453,7 +515,7 @@ def main():
     com = np.stack([row[1] for row in frame_data])
     time, msd = msd_from_com(com, float(np.diff(steps)[0]) * args.dt)
     alpha, diffusion = diffusion_diagnostics(time, msd)
-    stable_cutoff = cutoff_stability["largest_contiguous_stable_cutoff"]
+    stable_cutoff = plateau["plateau_cutoffs"][-1] if plateau["plateau_exists"] else None
     viscosity = None
     if stable_cutoff is not None:
         preferred_blocks = 5 if 5 in blocks else min(blocks)
@@ -475,6 +537,9 @@ def main():
     write_csv(out / "control_nonassoc.fixed_cutoff.csv",
               ["source", "duration", "cutoff", "blocks", "eta_cutoff", "eta_sd", "eta_sem", "safe_lag_fraction"],
               cutoff_rows)
+    write_csv(out / "control_nonassoc.duration_fixed_cutoff.csv",
+              list(duration_convergence[0]) if duration_convergence else ["cutoff"],
+              duration_convergence)
     write_csv(out / "control_nonassoc.block_statistics.csv", list(block_rows[0]), block_rows)
     write_csv(out / "control_nonassoc.block_summary.csv", list(block_summary[0]), block_summary)
     write_csv(out / "control_nonassoc.slow_tail_bins.csv",
@@ -487,6 +552,8 @@ def main():
               "durations": duration_summary, "block_uncertainty_lag": uncertainty,
               "terminal_diagnostic": terminal,
               "fixed_cutoff_stability": cutoff_stability,
+              "fixed_cutoff_duration_convergence": duration_convergence,
+              "cutoff_plateau": plateau,
               "resolved_slow_tail_lag_range": terminal.get("largest_contiguous_resolved_range"),
               "largest_contiguous_green_kubo_cutoff": stable_cutoff,
               "viscosity_estimate": viscosity,
@@ -496,6 +563,8 @@ def main():
               "com_frames": len(frame_data), "stars": int(com.shape[1]),
               "com_duration": float(time[-1]), "diffusion": diffusion,
               "stable_diffusion_coefficient": diffusion["D"] if diffusion["D_candidate_stable"] else None,
+              "diffusion_coefficient_fit_stable": diffusion["D_candidate_stable"],
+              "strict_exponent_criterion_passed": diffusion["strict_exponent_criterion_passed"],
               "asymptotic_fickian_confirmed": diffusion["asymptotic_fickian_confirmed"],
               "no_zero_shear_viscosity_claim": True}
     if args.assoc_correlations:

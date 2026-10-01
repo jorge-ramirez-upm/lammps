@@ -196,10 +196,14 @@ The analyzer makes no single terminal-time claim from a `1/e` crossing: it
 reports logarithmically binned block-SEM and block-SD loss-of-resolution lags,
 the largest contiguous statistically resolved slow-tail range, and a
 cumulative integral truncated at the first binned SEM crossing. Fixed-cutoff
-Green–Kubo values include block SEMs; convergence is prefix-contiguous, so an
-isolated later pass is explicitly not accepted. Diffusion fits are restricted
-to windows ending by `T/5`; candidate-window `D` values are reported with
-mean/median local exponents in the 250–500, 500–1000, and 250–1000 windows.
-A stricter sustained `|alpha-1|<=0.1` diagnostic separately reports whether
-asymptotic Fickian behavior is confirmed. No full production simulation or
-long associating R1-C2 continuation has been launched.
+Green–Kubo analysis separates prefix-duration convergence at fixed `t_c` from
+a plateau in `t_c`: it reports `T_min` at 10%, 15%, and 25% tolerances, the
+required `T/t_c`, and tests a viscosity plateau only with duration-converged
+estimates. The cutoff grid extends through 1000 where available; without a
+supported plateau the run estimates fixed-cutoff integrals but does not
+establish zero-shear viscosity. Diffusion fits are restricted to windows
+ending by `T/5`; candidate-window `D` values are reported with mean/median
+local exponents in the 250–500, 500–1000, and 250–1000 windows. A stricter
+sustained `|alpha-1|<=0.1` diagnostic is reported separately from any claim
+of perfectly asymptotic diffusion. No full production simulation or long
+associating R1-C2 continuation has been launched.

@@ -18,7 +18,7 @@ class NonassocControlTest(unittest.TestCase):
         n = 1001
         raw = np.zeros((n, 7)); raw[:, 0] = np.arange(n)
         raw[:, 1:4] = 1.0
-        summary, rows, cutoffs, blocks, block_summary, uncertainty, tail_bins, terminal = control._rheology_rows(
+        summary, rows, cutoffs, blocks, block_summary, uncertainty, tail_bins, terminal, duration = control._rheology_rows(
             raw, [1.0, 5.0], [1.0, 2.0], [2], 10.0, 1.0, 0.01, 2.0)
         self.assertEqual([item["duration"] for item in summary], [1.0, 5.0])
         self.assertTrue(any(item["cutoff"] == 2.0 for item in cutoffs))
@@ -27,6 +27,7 @@ class NonassocControlTest(unittest.TestCase):
         self.assertTrue(stability["cutoffs"])
         self.assertTrue(block_summary)
         self.assertTrue(tail_bins)
+        self.assertTrue(duration)
         self.assertIn("first_G_below_block_SEM", terminal)
 
     def test_known_fickian_msd(self):
@@ -65,7 +66,7 @@ class NonassocControlTest(unittest.TestCase):
                          "G_sd_over_abs_mean": abs(0.4 / mean) if mean else None})
             bins.append({"blocks": 5, "lag_start": lag, "lag_end": lag + 1.0,
                          "G_mean": mean, "G_sd": 0.4, "G_sem": 0.2, "n_samples": 5})
-        diagnostic = control.terminal_diagnostic(bins, block_rows, [5])
+        diagnostic = control.terminal_diagnostic(bins, block_rows, [5], full_g0=4.0)
         self.assertIsNone(diagnostic.get("tau_term"))
         self.assertEqual(diagnostic["first_G_below_block_SEM"], 2.0)
         self.assertEqual(diagnostic["first_G_below_block_SD"], 2.0)
@@ -86,6 +87,31 @@ class NonassocControlTest(unittest.TestCase):
         self.assertEqual(result["largest_contiguous_stable_cutoff"], 2.0)
         self.assertEqual(result["individually_stable_cutoffs"], [1.0, 2.0, 10.0])
         self.assertEqual(result["isolated_later_passes_non_converged"], [10.0])
+
+    def test_duration_convergence_uses_suffix_not_first_prefix(self):
+        rows = []
+        for cutoff, values in ((1.0, (0.5, 1.0, 1.02)), (2.0, (1.0, 1.01, 1.02))):
+            for duration, value in zip((10.0, 20.0, 40.0), values):
+                rows.append({"source": "nested", "cutoff": cutoff, "duration": duration,
+                             "eta_cutoff": value, "safe_lag_fraction": cutoff / duration})
+            rows.append({"source": "blocks", "cutoff": cutoff, "blocks": 5,
+                         "eta_cutoff": 1.0, "eta_sem": 0.05,
+                         "safe_lag_fraction": cutoff / 100.0})
+        result = control.fixed_cutoff_duration_convergence(rows)
+        first = result[0]
+        self.assertEqual(first["T_min_10pct"], 20.0)
+        self.assertEqual(first["T_min_25pct"], 20.0)
+        self.assertEqual(result[1]["T_min_10pct"], 10.0)
+
+    def test_plateau_requires_duration_converged_values(self):
+        rows = []
+        for cutoff in (1.0, 2.0, 5.0, 10.0):
+            rows.append({"cutoff": cutoff, "T_min_25pct": 100.0,
+                         "T_longest": 1000.0, "eta_from_longest_T": 1.0,
+                         "block_SEM": 0.05})
+        result = control.cutoff_plateau(rows)
+        self.assertTrue(result["plateau_exists"])
+        self.assertEqual(result["plateau_cutoffs"], [1.0, 2.0, 5.0, 10.0])
 
     def test_direct_com_output_preserves_ids_and_unwrapped_crossing(self):
         with tempfile.NamedTemporaryFile(mode="w+") as handle:
