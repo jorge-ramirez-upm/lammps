@@ -144,3 +144,51 @@ The instrumentation implementation was commit `0a01eab2de`; the benchmark
 provenance Git SHA was `695c713a9ab8b50f73d9c6d41329a967c2843223`, and the
 dedicated-host executable SHA-256 was
 `e403ee6a1a793b1fca3974a34b0a12c4e5c79fe2f948b4141265815072bb7862`.
+
+## Nonassociating full-system control
+
+The next control is prepared but not run at production length. It reads the
+original no-transient-association data file
+`Stars_NA4N10C1000rho0.85rhopoly0.8.equilibrated.lammpsdat`, preserving 1,000
+four-arm stars, 37,000 type-1 beads, 4,000 type-2 terminal sticker beads,
+2,563 type-3 solvent beads, 43,563 atoms, and 40,000 permanent FENE bonds.
+Type 2 remains chemically inactive but is not remapped; every type pair uses
+only WCA `lj/cut` excluded volume. There is no transient association style,
+kinetics fix, or network output in `in.nonassoc_control.lmp`.
+
+The planned production is `PROD_STEPS=500000`, `dt=0.01` (`T=5000`), with
+ordinary six-component pressure printed every step and the same six-channel
+`fix ave/correlate/long` estimator as R1-C1. Polymer types 1 and 2 are dumped
+as unwrapped `id mol type xu yu zu` every 100 steps (`Delta t=1`). This is
+5,000 frames × 41,000 polymer atoms; using a conservative 50 bytes/atom-line
+estimate gives about 10.25 GB uncompressed. The launcher selects compressed
+output when the executable supports it and records the estimate in
+`provenance.txt`.
+
+Prepare/run on the dedicated host with:
+
+```
+LMP=~/lammps/build-r1a/lmp MPI_NP=8 PROD_STEPS=500000 \
+  ./run_nonassoc_control_linux.sh
+OUT=nonassoc_control_runs ./status_nonassoc_control.sh
+```
+
+The launcher rejects an existing output root and records Git SHA, executable
+SHA-256, input-data SHA-256, seeds, stress/trajectory cadence, compression,
+and run length. It does not reuse an associating restart and performs no extra
+thermalization. The analyzer command after production is:
+
+```
+python3 analyze_nonassoc_control.py \
+  nonassoc_control_runs/production/control_nonassoc.raw \
+  nonassoc_control_runs/production/control_nonassoc.lammpstrj.gz \
+  --out-dir nonassoc_control_runs/analysis
+```
+
+It produces nested-duration rheology, fixed-cutoff Green–Kubo, block
+uncertainty, star-COM MSD, local logarithmic slope, and diffusion diagnostics.
+The slow rheological time is not defined by the first microscopic `G/G0=0.1`
+crossing; the analyzer reports a slow-reference diagnostic beginning after
+the local-force drop and withholds a terminal-time claim when block noise
+arrives first. No full production simulation or long associating R1-C2
+continuation has been launched.
