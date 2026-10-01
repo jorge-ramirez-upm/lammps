@@ -18,7 +18,7 @@ class NonassocControlTest(unittest.TestCase):
         n = 1001
         raw = np.zeros((n, 7)); raw[:, 0] = np.arange(n)
         raw[:, 1:4] = 1.0
-        summary, rows, cutoffs, blocks, block_summary, uncertainty, terminal = control._rheology_rows(
+        summary, rows, cutoffs, blocks, block_summary, uncertainty, tail_bins, terminal = control._rheology_rows(
             raw, [1.0, 5.0], [1.0, 2.0], [2], 10.0, 1.0, 0.01, 2.0)
         self.assertEqual([item["duration"] for item in summary], [1.0, 5.0])
         self.assertTrue(any(item["cutoff"] == 2.0 for item in cutoffs))
@@ -26,6 +26,7 @@ class NonassocControlTest(unittest.TestCase):
         stability = control.fixed_cutoff_stability(cutoffs)
         self.assertTrue(stability["cutoffs"])
         self.assertTrue(block_summary)
+        self.assertTrue(tail_bins)
         self.assertIn("first_G_below_block_SEM", terminal)
 
     def test_known_fickian_msd(self):
@@ -53,6 +54,7 @@ class NonassocControlTest(unittest.TestCase):
 
     def test_terminal_diagnostic_does_not_invent_tau(self):
         rows = []
+        bins = []
         block_rows = []
         for lag, mean in ((0.0, 4.0), (1.0, 2.0), (2.0, 0.2), (3.0, -0.1), (4.0, 0.3)):
             for block in (1, 2, 3, 4, 5):
@@ -61,11 +63,29 @@ class NonassocControlTest(unittest.TestCase):
             rows.append({"blocks": 5, "lag": lag, "G_mean": mean,
                          "G_sd": 0.4, "G_sem": 0.2,
                          "G_sd_over_abs_mean": abs(0.4 / mean) if mean else None})
-        diagnostic = control.terminal_diagnostic(rows, block_rows, [5])
+            bins.append({"blocks": 5, "lag_start": lag, "lag_end": lag + 1.0,
+                         "G_mean": mean, "G_sd": 0.4, "G_sem": 0.2, "n_samples": 5})
+        diagnostic = control.terminal_diagnostic(bins, block_rows, [5])
         self.assertIsNone(diagnostic.get("tau_term"))
         self.assertEqual(diagnostic["first_G_below_block_SEM"], 2.0)
         self.assertEqual(diagnostic["first_G_below_block_SD"], 2.0)
-        self.assertEqual(diagnostic["longest_sustained_positive_interval"]["end"], 2.0)
+        self.assertEqual(diagnostic["longest_sustained_positive_interval"]["end"], 3.0)
+        self.assertEqual(diagnostic["largest_contiguous_resolved_range"]["end"], 2.0)
+
+    def test_cutoff_stability_is_prefix_contiguous(self):
+        rows = []
+        for cutoff, stable in ((1.0, True), (2.0, True), (5.0, False), (10.0, True)):
+            for duration in (100.0, 200.0):
+                rows.append({"source": "nested", "cutoff": cutoff, "duration": duration,
+                             "eta_cutoff": 1.0 if stable else (1.0 if duration == 100 else 2.0),
+                             "safe_lag_fraction": cutoff / duration})
+            rows.append({"source": "blocks", "cutoff": cutoff, "blocks": 5,
+                         "eta_cutoff": 1.0, "eta_sem": 0.1,
+                         "safe_lag_fraction": cutoff / 1000.0})
+        result = control.fixed_cutoff_stability(rows)
+        self.assertEqual(result["largest_contiguous_stable_cutoff"], 2.0)
+        self.assertEqual(result["individually_stable_cutoffs"], [1.0, 2.0, 10.0])
+        self.assertEqual(result["isolated_later_passes_non_converged"], [10.0])
 
     def test_direct_com_output_preserves_ids_and_unwrapped_crossing(self):
         with tempfile.NamedTemporaryFile(mode="w+") as handle:

@@ -193,11 +193,13 @@ MSD, local logarithmic slope, and diffusion diagnostics. A short regression
 smoke test compares this output with COMs reconstructed from an optional atom
 dump; the latter is not needed for production analysis.
 The analyzer makes no single terminal-time claim from a `1/e` crossing: it
-reports block-SEM and block-SD loss-of-resolution lags, the longest positive
-block-mean interval, and a cumulative integral truncated at the first SEM
-crossing. Fixed-cutoff Green–Kubo values include block SEMs and a
-duration/block stability summary. Diffusion fits are restricted to windows
-ending by `T/5`; the reported Fickian onset requires a sustained rolling
-log-log exponent near one, and candidate-window `D` values are reported for
-stability. No full production simulation or long associating R1-C2
-continuation has been launched.
+reports logarithmically binned block-SEM and block-SD loss-of-resolution lags,
+the largest contiguous statistically resolved slow-tail range, and a
+cumulative integral truncated at the first binned SEM crossing. Fixed-cutoff
+Green–Kubo values include block SEMs; convergence is prefix-contiguous, so an
+isolated later pass is explicitly not accepted. Diffusion fits are restricted
+to windows ending by `T/5`; candidate-window `D` values are reported with
+mean/median local exponents in the 250–500, 500–1000, and 250–1000 windows.
+A stricter sustained `|alpha-1|<=0.1` diagnostic separately reports whether
+asymptotic Fickian behavior is confirmed. No full production simulation or
+long associating R1-C2 continuation has been launched.

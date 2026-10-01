@@ -101,8 +101,9 @@ def _rheology_rows(raw, durations, cutoffs, blocks, volume, temperature, dt, max
     uncertainty = {str(n): next((row["lag"] for row in block_summary
                                  if row["blocks"] == n and row["G_sd_over_abs_mean"] is not None
                                  and row["G_sd_over_abs_mean"] >= 1.0), None) for n in blocks}
-    terminal = terminal_diagnostic(block_summary, block_rows, blocks)
-    return duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, terminal
+    tail_bins = coarse_tail_bins(block_rows, blocks, 0.1, max_lag, 20)
+    terminal = terminal_diagnostic(tail_bins, block_rows, blocks)
+    return duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, tail_bins, terminal
 
 
 def _first_lag(rows, predicate):
@@ -112,14 +113,46 @@ def _first_lag(rows, predicate):
     return None
 
 
-def terminal_diagnostic(block_summary, block_rows, blocks):
+def coarse_tail_bins(block_rows, blocks, start, stop, count):
+    """Log-bin block G after the microscopic regime.
+
+    Statistics are taken over one bin-average per block, so neighboring raw
+    lag points are not treated as independent replicas.
+    """
+    preferred = 5 if 5 in blocks else (max(blocks) if blocks else None)
+    rows = [row for row in block_rows if row["blocks"] == preferred and row["lag"] >= start]
+    if not rows or stop <= start:
+        return []
+    edges = np.geomspace(start, stop, count + 1)
+    result = []
+    for left, right in zip(edges[:-1], edges[1:]):
+        per_block = []
+        lag_points = 0
+        for block in sorted({row["block"] if "block" in row else None for row in rows}):
+            values = [row["G"] for row in rows
+                      if row.get("block") == block and left <= row["lag"] < right]
+            if values:
+                per_block.append(float(np.mean(values)))
+                lag_points += len(values)
+        if not per_block:
+            continue
+        values = np.asarray(per_block, dtype=float)
+        sd = float(values.std(ddof=1)) if len(values) > 1 else 0.0
+        result.append({"blocks": preferred, "lag_start": float(left), "lag_end": float(right),
+                       "lag_center": float(math.sqrt(left * right)), "G_mean": float(values.mean()),
+                       "G_sd": sd, "G_sem": sd / math.sqrt(len(values)) if len(values) > 1 else 0.0,
+                       "n_samples": int(len(values)), "n_lag_points": int(lag_points)})
+    return result
+
+
+def terminal_diagnostic(tail_bins, block_rows, blocks):
     """Describe the slow stress tail without asserting a single terminal time."""
     preferred = 5 if 5 in blocks else (max(blocks) if blocks else None)
-    rows = sorted((row for row in block_summary if row["blocks"] == preferred), key=lambda row: row["lag"])
+    rows = sorted((row for row in tail_bins if row["blocks"] == preferred), key=lambda row: row["lag_start"])
     if not rows:
         return {"status": "unresolved", "block_scheme": preferred}
-    below_sem = _first_lag(rows[1:], lambda row: row["G_mean"] <= row["G_sem"])
-    below_sd = _first_lag(rows[1:], lambda row: row["G_mean"] <= row["G_sd"])
+    below_sem = next((float(row["lag_start"]) for row in rows if row["G_mean"] <= row["G_sem"]), None)
+    below_sd = next((float(row["lag_start"]) for row in rows if row["G_mean"] <= row["G_sd"]), None)
     positive_runs = []
     run = []
     for row in rows:
@@ -130,11 +163,21 @@ def terminal_diagnostic(block_summary, block_rows, blocks):
     if run:
         positive_runs.append(run)
     positive_run = max(positive_runs, key=len) if positive_runs else []
-    positive_end = positive_run[-1]["lag"] if positive_run else None
-    positive_start = positive_run[0]["lag"] if positive_run else None
+    positive_end = positive_run[-1]["lag_end"] if positive_run else None
+    positive_start = positive_run[0]["lag_start"] if positive_run else None
+    resolved_runs = []
+    run = []
+    for row in rows:
+        if row["G_mean"] > 0 and row["G_mean"] > row["G_sem"]:
+            run.append(row)
+        elif run:
+            resolved_runs.append(run); run = []
+    if run:
+        resolved_runs.append(run)
+    resolved_run = max(resolved_runs, key=len) if resolved_runs else []
     # Truncate the integral at the first loss of block-SEM resolution; later
     # noisy re-crossings do not extend the claimed resolved window.
-    resolved_end = below_sem if below_sem is not None else rows[-1]["lag"]
+    resolved_end = below_sem if below_sem is not None else rows[-1]["lag_end"]
     integral = None
     if resolved_end is not None and resolved_end > 0:
         eta_rows = [row for row in block_rows if row["blocks"] == preferred and
@@ -153,6 +196,11 @@ def terminal_diagnostic(block_summary, block_rows, blocks):
     return {"status": "descriptive_only", "block_scheme": preferred,
             "first_G_below_block_SEM": below_sem,
             "first_G_below_block_SD": below_sd,
+            "largest_contiguous_resolved_range": {
+                "start": resolved_run[0]["lag_start"] if resolved_run else None,
+                "end": resolved_run[-1]["lag_end"] if resolved_run else None,
+                "duration": (resolved_run[-1]["lag_end"] - resolved_run[0]["lag_start"]) if resolved_run else None,
+                "n_bins": len(resolved_run)},
             "longest_sustained_positive_interval": {"start": positive_start, "end": positive_end,
                                                        "duration": (positive_end - positive_start) if positive_run else None},
             "integral_relaxation": integral,
@@ -170,6 +218,9 @@ def fixed_cutoff_stability(cutoff_rows):
         block = [row for row in cutoff_rows if row["cutoff"] == cutoff and row["source"] == "blocks"
                  and row["safe_lag_fraction"] <= 0.2]
         if not len(nested) or not block:
+            result.append({"cutoff": float(cutoff), "nested_relative_span": None,
+                           "block_relative_sem": None, "stable_at_25_percent": False,
+                           "status": "insufficient safe duration/block data"})
             continue
         nested_mean = float(nested.mean())
         nested_relative_span = float((nested.max() - nested.min()) / max(abs(nested_mean), 1e-30))
@@ -177,10 +228,20 @@ def fixed_cutoff_stability(cutoff_rows):
                                    max(abs(np.mean([row["eta_cutoff"] for row in block])), 1e-30))
         result.append({"cutoff": float(cutoff), "nested_relative_span": nested_relative_span,
                        "block_relative_sem": block_relative_sem,
+                       "status": "tested",
                        "stable_at_25_percent": bool(nested_relative_span <= 0.25 and block_relative_sem <= 0.25)})
-    stable = [row["cutoff"] for row in result if row["stable_at_25_percent"]]
+    individually_stable = [row["cutoff"] for row in result if row["stable_at_25_percent"]]
+    contiguous = []
+    for row in result:
+        if not row["stable_at_25_percent"]:
+            break
+        contiguous.append(row["cutoff"])
+    isolated = [cutoff for cutoff in individually_stable if cutoff not in contiguous]
     return {"criteria": "only durations with cutoff/T <= 0.2 are compared; nested duration span and maximum block SEM each <= 25% of the cutoff integral",
-            "cutoffs": result, "largest_stable_cutoff": max(stable) if stable else None}
+            "cutoffs": result,
+            "largest_contiguous_stable_cutoff": max(contiguous) if contiguous else None,
+            "individually_stable_cutoffs": individually_stable,
+            "isolated_later_passes_non_converged": isolated}
 
 
 def _open_dump(path):
@@ -271,8 +332,44 @@ def _rolling_log_exponent(time, msd, window=9):
     return alpha
 
 
+def _alpha_window_stats(time, alpha, windows):
+    result = []
+    for left, right in windows:
+        selected = np.isfinite(alpha) & (time >= left) & (time <= right)
+        values = alpha[selected]
+        result.append({"window": f"{left:g}-{right:g}", "t_min": float(left),
+                       "t_max": float(right), "n_points": int(len(values)),
+                       "alpha_mean": float(np.mean(values)) if len(values) else None,
+                       "alpha_median": float(np.median(values)) if len(values) else None})
+    return result
+
+
+def _sustained_exponent_window(time, alpha, limit, tolerance, min_duration):
+    good = np.isfinite(alpha) & (time <= limit) & (abs(alpha - 1.0) <= tolerance)
+    runs = []
+    start = None
+    for index, is_good in enumerate(good):
+        if is_good and start is None:
+            start = index
+        if (not is_good or index == len(good) - 1) and start is not None:
+            end = index if is_good and index == len(good) - 1 else index - 1
+            if time[end] - time[start] >= min_duration:
+                runs.append((start, end))
+            start = None
+    if not runs:
+        return None
+    start, end = max(runs, key=lambda pair: time[pair[1]] - time[pair[0]])
+    return {"start": float(time[start]), "end": float(time[end]),
+            "duration": float(time[end] - time[start]),
+            "alpha_mean": float(np.mean(alpha[start:end + 1])),
+            "alpha_median": float(np.median(alpha[start:end + 1])),
+            "tolerance": tolerance}
+
+
 def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
-                          sustained_points=7):
+                          sustained_points=7, alpha_windows=((250.0, 500.0),
+                                                              (500.0, 1000.0),
+                                                              (250.0, 1000.0))):
     valid = (time > 0) & (msd > 0)
     alpha = _rolling_log_exponent(time, msd)
     limit = float(time[-1] * max_fraction)
@@ -303,8 +400,14 @@ def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
             if run_end - run_start + 1 >= sustained_points:
                 onset = float(time[run_start]); end = float(time[run_end]); break
             run_start = None
+    strict = _sustained_exponent_window(time, alpha, limit, 0.1,
+                                        max((limit * 0.1), (time[1] - time[0]) * sustained_points)
+                                        if len(time) > 1 else 0.0)
     return alpha, {"D": diffusion, "D_candidates": fits,
                    "D_candidate_stable": stable,
+                   "alpha_in_requested_windows": _alpha_window_stats(time, alpha, alpha_windows),
+                   "strict_asymptotic_window": strict,
+                   "asymptotic_fickian_confirmed": bool(strict is not None),
                    "D_fit_max_fraction_of_total_lag": max_fraction,
                    "fickian_onset": onset, "fickian_window_end": end,
                    "fickian_window_points": sustained_points,
@@ -338,7 +441,7 @@ def main():
     durations = [float(x) for x in args.durations.split(",") if x]
     cutoffs = [float(x) for x in args.cutoffs.split(",") if x]
     blocks = [int(x) for x in args.blocks.split(",") if x]
-    duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, terminal = _rheology_rows(
+    duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, tail_bins, terminal = _rheology_rows(
         raw, durations, cutoffs, blocks, args.volume, args.temperature, args.dt, args.max_lag)
     cutoff_stability = fixed_cutoff_stability(cutoff_rows)
     frame_data = list(com_frames(args.com_output, expected_stars=args.stars))
@@ -350,6 +453,17 @@ def main():
     com = np.stack([row[1] for row in frame_data])
     time, msd = msd_from_com(com, float(np.diff(steps)[0]) * args.dt)
     alpha, diffusion = diffusion_diagnostics(time, msd)
+    stable_cutoff = cutoff_stability["largest_contiguous_stable_cutoff"]
+    viscosity = None
+    if stable_cutoff is not None:
+        preferred_blocks = 5 if 5 in blocks else min(blocks)
+        candidates = [row for row in cutoff_rows if row["source"] == "blocks" and
+                      row["cutoff"] == stable_cutoff and row["blocks"] == preferred_blocks]
+        if candidates:
+            row = candidates[0]
+            viscosity = {"cutoff": stable_cutoff, "estimate": row["eta_cutoff"],
+                         "sem": row["eta_sem"], "blocks": preferred_blocks,
+                         "definition": "fixed-cutoff cumulative Green-Kubo integral; cutoff selected by contiguous duration/block stability"}
     stress_time, cs, cn, difference, modulus, eta = r1c1._modulus(
         raw, args.volume, args.temperature, args.dt)
     write_csv(out / "control_nonassoc.correlations.csv",
@@ -363,6 +477,9 @@ def main():
               cutoff_rows)
     write_csv(out / "control_nonassoc.block_statistics.csv", list(block_rows[0]), block_rows)
     write_csv(out / "control_nonassoc.block_summary.csv", list(block_summary[0]), block_summary)
+    write_csv(out / "control_nonassoc.slow_tail_bins.csv",
+              ["blocks", "lag_start", "lag_end", "lag_center", "G_mean", "G_sd", "G_sem", "n_samples", "n_lag_points"],
+              tail_bins)
     write_csv(out / "control_nonassoc.msd.csv", ["time", "g_CM", "alpha"],
               (dict(time=float(t), g_CM=float(g), alpha=float(a)) for t, g, a in zip(time, msd, alpha)))
     (out / "control_nonassoc.diffusion.json").write_text(json.dumps(diffusion, indent=2, sort_keys=True) + "\n")
@@ -370,11 +487,16 @@ def main():
               "durations": duration_summary, "block_uncertainty_lag": uncertainty,
               "terminal_diagnostic": terminal,
               "fixed_cutoff_stability": cutoff_stability,
+              "resolved_slow_tail_lag_range": terminal.get("largest_contiguous_resolved_range"),
+              "largest_contiguous_green_kubo_cutoff": stable_cutoff,
+              "viscosity_estimate": viscosity,
               "tau_term": None,
               "tau_term_status": "not claimed",
               "tau_term_definition": "No single terminal time is inferred from a 1/e crossing; use the block-resolved SEM/SD crossings, positive interval, and truncated integral diagnostic.",
               "com_frames": len(frame_data), "stars": int(com.shape[1]),
               "com_duration": float(time[-1]), "diffusion": diffusion,
+              "stable_diffusion_coefficient": diffusion["D"] if diffusion["D_candidate_stable"] else None,
+              "asymptotic_fickian_confirmed": diffusion["asymptotic_fickian_confirmed"],
               "no_zero_shear_viscosity_claim": True}
     if args.assoc_correlations:
         assoc = np.genfromtxt(args.assoc_correlations, names=True, delimiter=",")
