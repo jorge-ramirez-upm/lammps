@@ -27,7 +27,12 @@ class Run0NetworkRegression(unittest.TestCase):
             self.assertEqual((root / "network1.dat").read_bytes(), (root / "network2.dat").read_bytes())
             header = (root / "network1.dat").read_text().splitlines()[0]
             self.assertIn("# timestep", header)
-            self.assertNotIn("ERROR", (root / "run.log").read_text())
+            log = (root / "run.log").read_text()
+            self.assertNotIn("ERROR", log)
+            thermo_rows = [line.split() for line in log.splitlines()
+                           if line.split() and line.split()[0] == "1000000" and len(line.split()) >= 4]
+            self.assertGreaterEqual(len(thermo_rows), 2)
+            self.assertEqual(thermo_rows[-1][1:4], thermo_rows[-2][1:4])
 
 
 if __name__ == "__main__":
