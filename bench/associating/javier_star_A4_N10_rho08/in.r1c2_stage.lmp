@@ -21,6 +21,10 @@ fix integrate all nve
 fix thermostat all langevin 1.0 1.0 2.0 ${LANGEVIN_SEED} zero yes
 fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10.0 4.0 1.0 ${rwca} timing event_log ${EVENT_LOG}
 
+# Establish pair communication, ghosts, and the fix's restart partner state
+# without advancing time or invoking an end-of-step chemistry sweep.
+run 0
+
 # Capture the active state before the first chemistry sweep in Stage 1.
 if "${WRITE_INITIAL} == 1" then "write_associating_network ${INITIAL_NETWORK} fix kinetics"
 
@@ -36,7 +40,7 @@ variable nxz equal c_press[1]-c_press[3]
 variable nyz equal c_press[2]-c_press[3]
 variable st equal step
 fix raw all print 1 "${st} ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz}" file ${OUT_PREFIX}.raw screen no title "# step Pxx Pyy Pzz Pxy Pxz Pyz"
-fix corr all ave/correlate/long 1 100000 v_pxy v_pxz v_pyz v_nxy v_nxz v_nyz type auto file ${OUT_PREFIX}.gt overwrite ncorr 40
+if "${ONLINE} == 1" then "fix corr all ave/correlate/long 1 100000 v_pxy v_pxz v_pyz v_nxy v_nxz v_nyz type auto file ${OUT_PREFIX}.gt overwrite ncorr 40"
 variable temp_now equal temp
 variable ep equal pe
 fix diagnostics all ave/time 1000 1 1000 v_temp_now v_ep c_press[1] c_press[2] c_press[3] c_press[4] c_press[5] c_press[6] f_kinetics[1] file ${OUT_PREFIX}.diagnostics mode scalar ave one format "%16.12g"

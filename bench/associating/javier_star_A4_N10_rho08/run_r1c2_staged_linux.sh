@@ -7,12 +7,14 @@ root=$(cd "$(dirname "$0")" && pwd)
 MPI_NP=${MPI_NP:-8}
 STAGE=${STAGE:-1}
 COM_EVERY=${COM_EVERY:-100}
+ONLINE=${ONLINE:-1}
 LANGEVIN_SEED=${LANGEVIN_SEED:-48279}
 KINETICS_SEED=${KINETICS_SEED:-492845}
 OUT=${OUT:-$root/r1c2_runs}
 START_RESTART=${START_RESTART:-$root/r1c1_runs/production/production.restart}
 positive(){ [[ $1 =~ ^[1-9][0-9]*$ ]] || { echo "$2 must be a positive integer: $1" >&2; exit 2; }; }
 positive "$MPI_NP" MPI_NP; positive "$COM_EVERY" COM_EVERY
+[[ "$ONLINE" == 0 || "$ONLINE" == 1 ]] || { echo "ONLINE must be 0 or 1" >&2; exit 2; }
 [[ "$STAGE" =~ ^[123]$ ]] || { echo "STAGE must be 1, 2, or 3" >&2; exit 2; }
 case "$STAGE" in
   1) STAGE_STEPS=${STAGE_STEPS:-1000000}; DEFAULT_RESTART="$START_RESTART"; WRITE_INITIAL=1 ;;
@@ -37,15 +39,17 @@ prefix="$stage_dir/production"
 event_log="$stage_dir/events.dat"
 initial_network="$stage_dir/initial.network"
 final_network="$stage_dir/final.network"
-identity="git_sha=$repo_sha lmp_path=$lmp_path lmp_sha256=$lmp_sha256 mpi_np=$MPI_NP stage=$STAGE stage_steps=$STAGE_STEPS dt=0.01 com_every=$COM_EVERY langevin_seed=$LANGEVIN_SEED kinetics_seed=$KINETICS_SEED restart=$restart_path restart_sha256=$restart_sha256 event_logging=enabled write_initial=$WRITE_INITIAL"
+identity="git_sha=$repo_sha lmp_path=$lmp_path lmp_sha256=$lmp_sha256 mpi_np=$MPI_NP stage=$STAGE stage_steps=$STAGE_STEPS dt=0.01 com_every=$COM_EVERY online=$ONLINE langevin_seed=$LANGEVIN_SEED kinetics_seed=$KINETICS_SEED restart=$restart_path restart_sha256=$restart_sha256 event_logging=enabled write_initial=$WRITE_INITIAL"
 printf '%s\n' "$identity" > "$stage_dir/provenance.txt"
 mpirun -np "$MPI_NP" "$lmp_path" -log "$stage_dir/lammps.log" -screen none \
   -var RESTART "$restart_path" -var STAGE_STEPS "$STAGE_STEPS" \
-  -var COM_EVERY "$COM_EVERY" -var LANGEVIN_SEED "$LANGEVIN_SEED" -var KINETICS_SEED "$KINETICS_SEED" \
+  -var COM_EVERY "$COM_EVERY" -var ONLINE "$ONLINE" -var LANGEVIN_SEED "$LANGEVIN_SEED" -var KINETICS_SEED "$KINETICS_SEED" \
   -var EVENT_LOG "$event_log" -var INITIAL_NETWORK "$initial_network" -var FINAL_NETWORK "$final_network" \
-  -var WRITE_INITIAL "$WRITE_INITIAL" -var OUT_PREFIX "$prefix" \
+  -var WRITE_INITIAL "$WRITE_INITIAL" -var OUT_PREFIX "$prefix" -var FINAL_RESTART "$prefix.restart" \
   -in "$root/in.r1c2_stage.lmp"
-for file in "$prefix.raw" "$prefix.gt" "$prefix.com" "$event_log" "$final_network" "$prefix.restart"; do
+required_files=("$prefix.raw" "$prefix.com" "$event_log" "$final_network" "$prefix.restart")
+if [[ "$ONLINE" == 1 ]]; then required_files+=("$prefix.gt"); fi
+for file in "${required_files[@]}"; do
   [[ -s "$file" ]] || { echo "required stage output missing: $file" >&2; exit 4; }
 done
 if [[ "$WRITE_INITIAL" == 1 ]]; then [[ -s "$initial_network" ]] || { echo "initial network missing" >&2; exit 4; }; fi

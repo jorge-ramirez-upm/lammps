@@ -3,6 +3,7 @@ import importlib.util
 import os
 import pathlib
 import subprocess
+import re
 import tempfile
 import unittest
 
@@ -82,6 +83,18 @@ class R1C2StagedTest(unittest.TestCase):
                                 text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("AUTHORIZE_R1C2", result.stderr)
+
+    def test_stage_input_variables_are_supplied(self):
+        input_text = (HERE / "in.r1c2_stage.lmp").read_text()
+        variables = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", input_text))
+        internally_defined = {"rwca", "press", "pxx", "pyy", "pzz", "pxy", "pxz", "pyz",
+                              "nxy", "nxz", "nyz", "st", "temp_now", "ep", "star_chunks",
+                              "star_ids", "star_com"}
+        launcher_text = (HERE / "run_r1c2_staged_linux.sh").read_text()
+        supplied = set(re.findall(r"-var\s+([A-Za-z_][A-Za-z0-9_]*)", launcher_text))
+        missing = variables - internally_defined - supplied
+        self.assertEqual(missing, set())
+        self.assertIn('-var FINAL_RESTART "$prefix.restart"', launcher_text)
 
 
 if __name__ == "__main__":

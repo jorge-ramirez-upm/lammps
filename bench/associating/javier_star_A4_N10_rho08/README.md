@@ -231,6 +231,14 @@ correlation, direct per-star unwrapped COM, event log, final network, restart,
 provenance, and completion files. Stage 1 additionally writes
 `initial.network` before chemistry advances.
 
+The initial-network command is preceded by `run 0` after pair, dynamics, and
+kinetics setup. This initializes communication/ghost state without advancing
+the timestep or executing an end-of-step chemistry sweep; production stress,
+COM, and correlation fixes are defined afterward. The first failed attempt
+left `r1c2_runs/stage1/` without a completion marker. It must be inspected and
+then removed manually before retrying Stage 1; the launcher intentionally
+refuses to overwrite it.
+
 The exact event format is `timestep event_type sticker_i sticker_j molecule_i
 molecule_j`, with `C/B` events and canonical sticker IDs. The staged analyzer
 `analyze_r1c2_staged.py` concatenates R1-C1 and stage raw stress files, removes
