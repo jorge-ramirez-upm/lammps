@@ -119,3 +119,28 @@ trusted R1-C1 restart. It performs one warm-up and alternating OFF/ON
 measurements, keeps outputs separate, records executable provenance, and applies
 the provisional <=2% PASS, <=5% ACCEPTABLE, >5% FAIL/redesign thresholds.
 No long R1-C2 production run is authorized by this section.
+
+### Frozen dedicated-host result
+
+The dedicated-host gate completed with the same executable, starting restart,
+seeds, and configuration for three OFF and three ON runs at MPI rank count 8
+and 100,000 MD steps. The machine-readable result is
+`r1c2_event_logging_benchmark_result.json`.
+
+| mode | wall times (s) | median wall (s) | median steps/s |
+| --- | --- | ---: | ---: |
+| OFF | 259.66, 259.84, 260.35 | 259.84 | 384.8522 |
+| ON | 260.36, 260.30, 260.47 | 260.36 | 384.0836 |
+
+The measured median slowdown is 0.2001%, well below the provisional 2% PASS
+threshold. Both modes accepted 1,034 creations and 1,047 breaks. OFF logged
+zero events; ON logged 2,081 events in 60,986 bytes, or 29.31 bytes/event.
+The 0.20% value should not be read as high-precision: it is effectively
+negligible compared with the observed run-to-run timing scatter. The gate is
+**PASS**, and event logging is frozen as enabled for future associating
+production runs.
+
+The instrumentation implementation was commit `0a01eab2de`; the benchmark
+provenance Git SHA was `695c713a9ab8b50f73d9c6d41329a967c2843223`, and the
+dedicated-host executable SHA-256 was
+`e403ee6a1a793b1fca3974a34b0a12c4e5c79fe2f948b4141265815072bb7862`.

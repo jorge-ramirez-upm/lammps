@@ -1,0 +1,26 @@
+{
+  "benchmark_git_sha": "695c713a9ab8b50f73d9c6d41329a967c2843223",
+  "instrumentation_commit": "0a01eab2de",
+  "executable": "/home/jramirez/lammps/build-r1a/lmp",
+  "executable_sha256": "e403ee6a1a793b1fca3974a34b0a12c4e5c79fe2f948b4141265815072bb7862",
+  "mpi_ranks": 8,
+  "steps": 100000,
+  "repetitions_per_mode": 3,
+  "accepted_creations": 1034,
+  "accepted_breaks": 1047,
+  "off_logged_events": 0,
+  "on_logged_events": 2081,
+  "on_event_log_bytes": 60986,
+  "on_bytes_per_event": 29.306102835175395,
+  "off_wall_seconds": [259.66, 259.84, 260.35],
+  "on_wall_seconds": [260.36, 260.30, 260.47],
+  "medians": {
+    "off_wall_seconds": 259.84,
+    "on_wall_seconds": 260.36,
+    "off_steps_per_second": 384.8522167487685,
+    "on_steps_per_second": 384.08357658626517
+  },
+  "slowdown_percent": 0.2001231527093745,
+  "performance_gate": "PASS",
+  "conclusion": "Event logging is effectively negligible at this benchmark scale; the 0.20% median difference is comparable to ordinary run-to-run timing scatter. It is accepted for future associating production runs."
+}
