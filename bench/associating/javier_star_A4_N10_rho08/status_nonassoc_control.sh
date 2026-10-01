@@ -7,6 +7,6 @@ if [[ -f "$OUT/production/control_nonassoc.complete" ]]; then
 else
   echo "production: incomplete"
 fi
-for file in "$OUT"/production/control_nonassoc.{raw,gt,lammpstrj,lammpstrj.gz,restart}; do
+for file in "$OUT"/production/control_nonassoc.{raw,gt,com,lammpstrj,lammpstrj.gz,restart}; do
   [[ -e "$file" ]] && ls -lh "$file"
 done

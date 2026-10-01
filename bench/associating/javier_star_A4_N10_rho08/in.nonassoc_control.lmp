@@ -35,8 +35,16 @@ variable nyz equal c_press[2]-c_press[3]
 fix raw all print 1 "${st} ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz}" file ${OUT_PREFIX}.raw screen no title "# step Pxx Pyy Pzz Pxy Pxz Pyz"
 if "${ONLINE} == 1" then "fix corr all ave/correlate/long 1 100000 v_pxy v_pxz v_pyz v_nxy v_nxz v_nyz type auto file ${OUT_PREFIX}.gt overwrite ncorr 40"
 
-if "${TRAJ_GZ} == 1" then "dump starcoords stars custom/gz ${TRAJ_EVERY} ${OUT_PREFIX}.lammpstrj.gz id mol type xu yu zu" else "dump starcoords stars custom ${TRAJ_EVERY} ${OUT_PREFIX}.lammpstrj id mol type xu yu zu"
-dump_modify starcoords sort id
+# One row per star: original molecule ID followed by unwrapped COM x/y/z.
+# ids once + compress yes makes the row-to-molecule mapping deterministic.
+compute star_chunks stars chunk/atom molecule nchunk once ids once compress yes
+compute star_ids stars property/chunk star_chunks id
+compute star_com stars com/chunk star_chunks
+fix starcom stars ave/time ${COM_EVERY} 1 ${COM_EVERY} c_star_ids c_star_com[*] file ${OUT_PREFIX}.com mode vector ave one
+
+# Full atom output is retained only as an explicit regression/debug option.
+if "${FULL_TRAJ} == 1" then "dump starcoords stars custom ${TRAJ_EVERY} ${OUT_PREFIX}.lammpstrj id mol type xu yu zu"
+if "${FULL_TRAJ} == 1" then "dump_modify starcoords sort id"
 
 variable t equal temp
 variable ep equal pe

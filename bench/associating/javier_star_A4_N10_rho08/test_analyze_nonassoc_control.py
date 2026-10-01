@@ -36,12 +36,25 @@ class NonassocControlTest(unittest.TestCase):
         self.assertGreater(np.nanmedian(alpha[-50:]), 0.8)
         self.assertLess(np.nanmedian(alpha[-50:]), 1.2)
 
-    def test_malformed_trajectory(self):
+    def test_direct_com_output_preserves_ids_and_unwrapped_crossing(self):
         with tempfile.NamedTemporaryFile(mode="w+") as handle:
-            handle.write("ITEM: TIMESTEP\n0\n")
+            handle.write("# Time-averaged data for fix starcom\n")
+            handle.write("# TimeStep Number-of-rows\n")
+            handle.write("# Row c_star_ids c_star_com[1] c_star_com[2] c_star_com[3]\n")
+            handle.write("0 2\n1 11 17.9 0.0 0.0\n2 12 -18.2 0.0 0.0\n")
+            handle.write("100 2\n1 11 18.4 0.0 0.0\n2 12 -17.7 0.0 0.0\n")
+            handle.flush()
+            frames = list(control.com_frames(handle.name, expected_stars=2))
+        self.assertEqual([frame[2] for frame in frames], [[11, 12], [11, 12]])
+        self.assertEqual(frames[1][0], 100)
+        self.assertAlmostEqual(frames[1][1][0, 0], 18.4)
+
+    def test_malformed_com_output(self):
+        with tempfile.NamedTemporaryFile(mode="w+") as handle:
+            handle.write("0 not-a-count\n")
             handle.flush()
             with self.assertRaises(ValueError):
-                list(control.dump_frames(handle.name, expected_atoms=0))
+                list(control.com_frames(handle.name, expected_stars=0))
 
 
 if __name__ == "__main__":

@@ -84,47 +84,52 @@ def _open_dump(path):
     return gzip.open(path, "rt") if str(path).endswith(".gz") else open(path)
 
 
-def dump_frames(path, expected_atoms=41000):
+def com_frames(path, expected_stars=1000):
+    """Yield (timestep, COM[star, xyz]) from fix ave/time vector output.
+
+    Each frame is a timestep/row-count pair followed by rows containing the
+    deterministic compressed-chunk row, original molecule ID, and unwrapped
+    x/y/z.  The molecule ID is retained in the file rather than inferred from
+    atom dumps.
+    """
     with _open_dump(path) as handle:
         while True:
             line = handle.readline()
             if not line:
                 return
-            if line.strip() != "ITEM: TIMESTEP":
+            if line.startswith("#") or not line.strip():
                 continue
-            step = int(handle.readline())
-            if handle.readline().strip() != "ITEM: NUMBER OF ATOMS":
-                raise ValueError("malformed trajectory atom-count header")
-            count = int(handle.readline())
-            if expected_atoms and count != expected_atoms:
-                raise ValueError(f"expected {expected_atoms} polymer atoms, got {count}")
-            if not handle.readline().startswith("ITEM: BOX BOUNDS"):
-                raise ValueError("malformed trajectory box header")
-            for _ in range(3):
-                if not handle.readline():
-                    raise ValueError("truncated trajectory box")
-            header = handle.readline().split()
-            if header[:2] != ["ITEM:", "ATOMS"]:
-                raise ValueError("malformed trajectory atom header")
-            columns = {name: index for index, name in enumerate(header[2:])}
-            required = ("id", "mol", "type", "xu", "yu", "zu")
-            if any(name not in columns for name in required):
-                raise ValueError("trajectory needs id mol type xu yu zu")
-            centers, counts = {}, {}
-            for _ in range(count):
+            first = line.split()
+            if len(first) != 2:
+                raise ValueError("malformed COM frame header")
+            try:
+                step, count = int(first[0]), int(first[1])
+            except ValueError as exc:
+                raise ValueError("malformed COM timestep/row-count header") from exc
+            if expected_stars and count != expected_stars:
+                raise ValueError(f"expected {expected_stars} stars, got {count}")
+            rows = []
+            for expected_row in range(1, count + 1):
                 fields = handle.readline().split()
-                if len(fields) <= max(columns.values()):
-                    raise ValueError("truncated trajectory atom record")
-                if int(fields[columns["type"]]) not in (1, 2):
-                    raise ValueError("polymer trajectory contains a non-polymer type")
-                mol = int(fields[columns["mol"]])
-                point = np.array([float(fields[columns[name]]) for name in ("xu", "yu", "zu")])
-                centers[mol] = centers.get(mol, np.zeros(3)) + point
-                counts[mol] = counts.get(mol, 0) + 1
-            molecules = sorted(centers)
-            if not molecules or any(counts[mol] != 41 for mol in molecules):
-                raise ValueError("each star must have 41 type-1/type-2 beads")
-            yield step, np.array([centers[mol] / counts[mol] for mol in molecules])
+                if len(fields) != 5:
+                    raise ValueError("malformed COM row")
+                try:
+                    row, molecule = int(fields[0]), int(fields[1])
+                    point = [float(value) for value in fields[2:5]]
+                except ValueError as exc:
+                    raise ValueError("malformed COM row values") from exc
+                if row != expected_row:
+                    raise ValueError("COM rows are not in deterministic order")
+                rows.append((molecule, point))
+            molecules = [molecule for molecule, _ in rows]
+            if len(set(molecules)) != count:
+                raise ValueError("duplicate molecule ID in COM frame")
+            yield step, np.asarray([point for _, point in rows], dtype=float), molecules
+
+
+def dump_frames(path, expected_atoms=41000):
+    """Backward-compatible alias removed from the production path."""
+    raise ValueError("atom trajectory parsing is disabled; use the direct COM output")
 
 
 def msd_from_com(com, dt):
@@ -180,9 +185,10 @@ def write_csv(path, fields, rows):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("raw")
-    parser.add_argument("trajectory")
+    parser.add_argument("com_output")
     parser.add_argument("--out-dir", default=".")
     parser.add_argument("--volume", type=float, default=43563.0 / 0.85)
+    parser.add_argument("--stars", type=int, default=1000)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--dt", type=float, default=0.01)
     parser.add_argument("--durations", default="100,250,500,1000,2500,5000")
@@ -198,7 +204,7 @@ def main():
     blocks = [int(x) for x in args.blocks.split(",") if x]
     duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty = _rheology_rows(
         raw, durations, cutoffs, blocks, args.volume, args.temperature, args.dt, args.max_lag)
-    frame_data = list(dump_frames(args.trajectory))
+    frame_data = list(com_frames(args.com_output, expected_stars=args.stars))
     if not frame_data:
         raise ValueError("no trajectory frames")
     steps = np.array([row[0] for row in frame_data])
@@ -237,8 +243,8 @@ def main():
               "tau_term": tau_term,
               "tau_term_status": "resolved before block uncertainty" if tau_term is not None else "unresolved or statistically ambiguous",
               "tau_term_definition": "slow-reference analysis starts at t=1; a terminal time is claimed only if the slow-component 1/e crossing precedes block uncertainty",
-              "trajectory_frames": len(frame_data), "stars": int(com.shape[1]),
-              "trajectory_duration": float(time[-1]), "diffusion": diffusion,
+              "com_frames": len(frame_data), "stars": int(com.shape[1]),
+              "com_duration": float(time[-1]), "diffusion": diffusion,
               "no_zero_shear_viscosity_claim": True}
     if args.assoc_correlations:
         assoc = np.genfromtxt(args.assoc_correlations, names=True, delimiter=",")

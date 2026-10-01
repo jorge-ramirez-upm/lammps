@@ -158,12 +158,14 @@ kinetics fix, or network output in `in.nonassoc_control.lmp`.
 
 The planned production is `PROD_STEPS=500000`, `dt=0.01` (`T=5000`), with
 ordinary six-component pressure printed every step and the same six-channel
-`fix ave/correlate/long` estimator as R1-C1. Polymer types 1 and 2 are dumped
-as unwrapped `id mol type xu yu zu` every 100 steps (`Delta t=1`). This is
-5,000 frames × 41,000 polymer atoms; using a conservative 50 bytes/atom-line
-estimate gives about 10.25 GB uncompressed. The launcher selects compressed
-output when the executable supports it and records the estimate in
-`provenance.txt`.
+`fix ave/correlate/long` estimator as R1-C1. Diffusion output is now written
+directly by LAMMPS with `compute chunk/atom molecule` and `compute com/chunk`
+for the 1,000-star polymer group. At the default `COM_EVERY=100`, each frame
+contains `row molecule_id xu yu zu` at `Delta t=1`; `nchunk once`, `ids once`,
+and `compress yes` make the row-to-molecule mapping deterministic, while the
+coordinates are unwrapped. The default 5,000-frame COM file is estimated at
+about 320 MB uncompressed (the launcher records the estimate). The old full
+atom dump is disabled; set `FULL_TRAJ=1` only for debugging/regression.
 
 Prepare/run on the dedicated host with:
 
@@ -174,19 +176,22 @@ OUT=nonassoc_control_runs ./status_nonassoc_control.sh
 ```
 
 The launcher rejects an existing output root and records Git SHA, executable
-SHA-256, input-data SHA-256, seeds, stress/trajectory cadence, compression,
-and run length. It does not reuse an associating restart and performs no extra
-thermalization. The analyzer command after production is:
+SHA-256, input-data SHA-256, seeds, stress/COM cadence, and run length. It
+does not reuse an associating restart and performs no extra thermalization.
+The analyzer command after production is:
 
 ```
 python3 analyze_nonassoc_control.py \
   nonassoc_control_runs/production/control_nonassoc.raw \
-  nonassoc_control_runs/production/control_nonassoc.lammpstrj.gz \
+  nonassoc_control_runs/production/control_nonassoc.com \
   --out-dir nonassoc_control_runs/analysis
 ```
 
-It produces nested-duration rheology, fixed-cutoff Green–Kubo, block
-uncertainty, star-COM MSD, local logarithmic slope, and diffusion diagnostics.
+It reads the per-star unwrapped COM rows directly and produces
+nested-duration rheology, fixed-cutoff Green–Kubo, block uncertainty, star-COM
+MSD, local logarithmic slope, and diffusion diagnostics. A short regression
+smoke test compares this output with COMs reconstructed from an optional atom
+dump; the latter is not needed for production analysis.
 The slow rheological time is not defined by the first microscopic `G/G0=0.1`
 crossing; the analyzer reports a slow-reference diagnostic beginning after
 the local-force drop and withholds a terminal-time claim when block noise
