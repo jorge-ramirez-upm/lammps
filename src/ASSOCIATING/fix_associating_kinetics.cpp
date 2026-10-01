@@ -14,6 +14,7 @@
 #include "utils.h"
 #include <cstring>
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <set>
@@ -23,7 +24,7 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 
 FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), seed(0), kinetics(0), timing(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), timing_sweeps(0), timing_stickers(0), timing_edges_sum(0), timing_edges_min(0), timing_edges_max(0), timing_active_sum(0), timing_active_min(0), timing_active_max(0), timing_created0(0), timing_broken0(0), list(nullptr), pair(nullptr), nmax_old(0)
+    Fix(lmp,narg,arg), partner(nullptr), first(0), second(0), debug_pair(0), seed(0), kinetics(0), timing(0), nu0(0), ea(0), temperature(0), r_assoc(0), created(0), broken(0), timing_sweeps(0), timing_stickers(0), timing_edges_sum(0), timing_edges_min(0), timing_edges_max(0), timing_active_sum(0), timing_active_min(0), timing_active_max(0), timing_created0(0), timing_broken0(0), event_log_file(nullptr), event_log_events(0), event_log_bytes(0), list(nullptr), pair(nullptr), nmax_old(0)
 {
   if (narg != 3 && (narg != 6 || strcmp(arg[3],"debug_pair") != 0) && narg < 9)
     error->all(FLERR,"Illegal fix associating/kinetics command");
@@ -41,6 +42,9 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
     kinetics=1;
     for (int i=9; i<narg;) {
       if (strcmp(arg[i],"timing") == 0) { timing=1; ++i; }
+      else if (strcmp(arg[i],"event_log") == 0 && i+1<narg) {
+        event_log_name=arg[i+1]; i+=2;
+      }
       else if (strcmp(arg[i],"debug_pair") == 0 && i+2<narg) {
         first=utils::tnumeric(FLERR,arg[i+1],false,lmp); second=utils::tnumeric(FLERR,arg[i+2],false,lmp);
         if(first<=0 || second<=0 || first==second) error->all(FLERR,"Invalid debug association pair");
@@ -63,6 +67,7 @@ FixAssociatingKinetics::FixAssociatingKinetics(LAMMPS *lmp, int narg, char **arg
 }
 FixAssociatingKinetics::~FixAssociatingKinetics()
 {
+  close_event_log();
   atom->delete_callback(id,Atom::GROW);
   atom->delete_callback(id,Atom::RESTART);
   atom->delete_callback(id,Atom::BORDER);
@@ -77,6 +82,7 @@ void FixAssociatingKinetics::init()
     error->all(FLERR,"Fix associating/kinetics r_assoc must be smaller than associating R0");
   if (kinetics) { auto *req=neighbor->add_request(this,NeighConst::REQ_FULL|NeighConst::REQ_OCCASIONAL); req->set_cutoff_fixed(r_assoc); }
   if (debug_pair) initialize_debug_pair();
+  if (!event_log_name.empty()) open_event_log();
   comm->forward_comm(this);
   if (timing) {
     timing_sweeps=timing_stickers=timing_edges_sum=timing_active_sum=0;
@@ -120,6 +126,75 @@ void FixAssociatingKinetics::process_sweep(StickerStates &states, std::vector<St
     if (make) ++created; else ++broken;
   }
 }
+
+void FixAssociatingKinetics::open_event_log()
+{
+  if (event_log_file || comm->me != 0) return;
+  FILE *existing=fopen(event_log_name.c_str(),"r");
+  if (existing) {
+    fclose(existing);
+    error->all(FLERR,"Associating event log already exists; choose a new file");
+  }
+  event_log_file=fopen(event_log_name.c_str(),"w");
+  if (!event_log_file)
+    error->all(FLERR,"Cannot open associating event log {}: {}",event_log_name,utils::getsyserror());
+  utils::print(event_log_file,"# associating_event_log version 1\n");
+  utils::print(event_log_file,"# timestep event_type sticker_i sticker_j molecule_i molecule_j\n");
+  event_log_buffer.reserve(1<<20);
+}
+
+template <typename Integer>
+static void append_event_integer(std::string &buffer, Integer value)
+{
+  char text[64];
+  auto result=std::to_chars(text,text+sizeof(text),value);
+  buffer.append(text,result.ptr);
+}
+
+void FixAssociatingKinetics::log_events()
+{
+  if (!event_log_file || accepted_events.empty()) return;
+  double start=timing ? MPI_Wtime() : 0.0;
+  for (const auto &event : accepted_events) {
+    append_event_integer(event_log_buffer,update->ntimestep);
+    event_log_buffer.push_back(' ');
+    event_log_buffer.push_back(event.creation ? 'C' : 'B');
+    event_log_buffer.push_back(' ');
+    append_event_integer(event_log_buffer,event.first);
+    event_log_buffer.push_back(' ');
+    append_event_integer(event_log_buffer,event.second);
+    event_log_buffer.push_back(' ');
+    append_event_integer(event_log_buffer,event.molecule_first);
+    event_log_buffer.push_back(' ');
+    append_event_integer(event_log_buffer,event.molecule_second);
+    event_log_buffer.push_back('\n');
+    ++event_log_events;
+    if (event_log_buffer.size() >= (1<<20)) flush_event_log();
+  }
+  if (timing) timing_stage[5]+=MPI_Wtime()-start;
+}
+
+void FixAssociatingKinetics::flush_event_log()
+{
+  if (!event_log_file || event_log_buffer.empty()) return;
+  double start=timing ? MPI_Wtime() : 0.0;
+  const size_t bytes=event_log_buffer.size();
+  if (fwrite(event_log_buffer.data(),1,bytes,event_log_file) != bytes)
+    error->one(FLERR,"Error writing associating event log {}: {}",event_log_name,utils::getsyserror());
+  event_log_buffer.clear();
+  event_log_bytes+=static_cast<bigint>(bytes);
+  if (timing) timing_stage[6]+=MPI_Wtime()-start;
+}
+
+void FixAssociatingKinetics::close_event_log()
+{
+  if (!event_log_file) return;
+  flush_event_log();
+  if (fclose(event_log_file) != 0)
+    error->one(FLERR,"Error closing associating event log {}: {}",event_log_name,utils::getsyserror());
+  event_log_file=nullptr;
+}
+
 void FixAssociatingKinetics::end_of_step()
 {
   if (update->ntimestep % nevery || !list) return;
@@ -175,6 +250,7 @@ void FixAssociatingKinetics::end_of_step()
   }
   if (timing) { timing_stage[2] += MPI_Wtime()-start; start=MPI_Wtime(); }
   process_sweep(states,edges,update->ntimestep);
+  log_events();
   if (timing) { timing_stage[3] += MPI_Wtime()-start; start=MPI_Wtime(); }
   for (int i=0;i<atom->nlocal;++i) {
     auto state=states.find(atom->tag[i]);
@@ -200,14 +276,15 @@ void FixAssociatingKinetics::end_of_step()
 }
 void FixAssociatingKinetics::post_run()
 {
+  flush_event_log();
   if (!timing || !timing_sweeps) return;
-  double critical[5], local_total=0.0, critical_total;
-  for (int i=0;i<5;++i) local_total+=timing_stage[i];
-  MPI_Reduce(timing_stage,critical,5,MPI_DOUBLE,MPI_MAX,0,world);
+  double critical[7], local_total=0.0, critical_total;
+  for (int i=0;i<7;++i) local_total+=timing_stage[i];
+  MPI_Reduce(timing_stage,critical,7,MPI_DOUBLE,MPI_MAX,0,world);
   MPI_Reduce(&local_total,&critical_total,1,MPI_DOUBLE,MPI_MAX,0,world);
   if (comm->me == 0) {
     utils::logmesg(lmp,"ASSOCIATING_TIMING sweeps={} atoms={} stickers={} candidates_mean={:.6f} candidates_min={} candidates_max={} active_mean={:.6f} active_min={} active_max={} accepted_creations={} accepted_breaks={}\n",timing_sweeps,atom->natoms,timing_stickers,timing_edges_sum/static_cast<double>(timing_sweeps),timing_edges_min,timing_edges_max,timing_active_sum/static_cast<double>(timing_sweeps),timing_active_min,timing_active_max,created-timing_created0,broken-timing_broken0);
-    utils::logmesg(lmp,"ASSOCIATING_TIMING_SECONDS extraction={:.9f} allgather={:.9f} reconstruction={:.9f} process_sweep={:.9f} writeback_forward={:.9f} total={:.9f}\n",critical[0],critical[1],critical[2],critical[3],critical[4],critical_total);
+    utils::logmesg(lmp,"ASSOCIATING_TIMING_SECONDS extraction={:.9f} allgather={:.9f} reconstruction={:.9f} process_sweep={:.9f} writeback_forward={:.9f} event_format={:.9f} event_flush={:.9f} total={:.9f} logged_events={} logged_bytes={}\n",critical[0],critical[1],critical[2],critical[3],critical[4],critical[5],critical[6],critical_total,event_log_events,event_log_bytes);
   }
 }
 std::vector<FixAssociatingKinetics::NetworkEdge> FixAssociatingKinetics::active_network()

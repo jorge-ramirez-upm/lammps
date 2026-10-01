@@ -8,6 +8,8 @@ FixStyle(associating/kinetics,FixAssociatingKinetics);
 #define LMP_FIX_ASSOCIATING_KINETICS_H
 #include "fix.h"
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <unordered_map>
 #include <vector>
 namespace LAMMPS_NS {
@@ -59,12 +61,20 @@ class FixAssociatingKinetics : public Fix {
   bigint timing_sweeps, timing_stickers, timing_edges_sum, timing_edges_min, timing_edges_max;
   bigint timing_active_sum, timing_active_min, timing_active_max;
   bigint timing_created0, timing_broken0;
-  double timing_stage[5];
+  double timing_stage[7];
+  std::string event_log_name;
+  FILE *event_log_file;
+  std::string event_log_buffer;
+  bigint event_log_events, event_log_bytes;
   std::vector<Event> accepted_events;
   class NeighList *list;
   class PairAssociating *pair;
   int nmax_old;
   void initialize_debug_pair();
+  void open_event_log();
+  void log_events();
+  void flush_event_log();
+  void close_event_log();
   static uint64_t random_value(uint64_t, bigint, tagint, tagint, uint64_t);
   void process_sweep(StickerStates &, std::vector<StickerEdge> &, bigint);
 };
