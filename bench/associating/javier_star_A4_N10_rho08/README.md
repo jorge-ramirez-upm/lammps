@@ -207,3 +207,45 @@ local exponents in the 250–500, 500–1000, and 250–1000 windows. A stricter
 sustained `|alpha-1|<=0.1` diagnostic is reported separately from any claim
 of perfectly asymptotic diffusion. No full production simulation or long
 associating R1-C2 continuation has been launched.
+
+## Frozen nonassociating control and staged R1-C2 preparation
+
+The completed nonassociating control is frozen in
+`nonassoc_control_conclusions.json`. It gives `G(0)≈66.34`, approximately
+unity zero-lag isotropy, a coarse block-resolved slow-tail range to `t≈136.8`,
+and no defensible single terminal time. The descriptive integral relaxation
+diagnostic is `0.1756±0.0194`, but is dominated by the short-time modulus.
+Fixed-cutoff Green–Kubo convergence empirically requires roughly `T/t_c≈50`
+for useful intermediate cutoffs (`t_c=10–50`); the cutoff values do not form
+a convincing plateau, so `eta_0` remains not established. The frozen control
+diffusion result is `D_nonassoc≈1.77e-3`, with a few-percent fit-window
+variation and motion approaching/consistent with Fickian behavior, not a claim
+of a perfect asymptotic `alpha=1` plateau.
+
+The staged continuation is prepared but not authorized or launched.
+`run_r1c2_staged_linux.sh` requires `AUTHORIZE_R1C2=YES`, starts from the
+trusted `r1c1_runs/production/production.restart`, never resets the timestep,
+and uses stages of 1,000,000, 1,000,000, and 2,000,000 steps for cumulative
+`T=20000, 30000, 50000`. Each stage has separate raw stress, online
+correlation, direct per-star unwrapped COM, event log, final network, restart,
+provenance, and completion files. Stage 1 additionally writes
+`initial.network` before chemistry advances.
+
+The exact event format is `timestep event_type sticker_i sticker_j molecule_i
+molecule_j`, with `C/B` events and canonical sticker IDs. The staged analyzer
+`analyze_r1c2_staged.py` concatenates R1-C1 and stage raw stress files, removes
+only exact duplicate boundary rows, rejects gaps and inconsistent overlaps,
+replays the initial network plus events, and reports bare and
+Javier-renormalized survival. Same-partner detach/reattach is merged;
+third-partner binding terminates the pending renormalized episode. Lifetimes
+are explicitly left-censored at the R1-C2 start and right-censored at the
+final observation where appropriate.
+
+Stage 1 command, when explicitly authorized on the dedicated Linux host:
+
+```bash
+AUTHORIZE_R1C2=YES LMP=~/lammps/build-r1a/lmp MPI_NP=8 STAGE=1 \
+  ./run_r1c2_staged_linux.sh
+```
+
+No Stage 1, Stage 2, or Stage 3 production run has been launched.

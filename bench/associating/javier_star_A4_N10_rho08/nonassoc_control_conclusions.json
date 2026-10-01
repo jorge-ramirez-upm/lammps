@@ -1,0 +1,40 @@
+{
+  "model": "1000 four-arm stars, N=10, rho_poly=0.8, rho=0.85, T=1, dt=0.01",
+  "production_duration": 5000,
+  "G0": 66.34,
+  "zero_lag_isotropy": "approximately unity",
+  "resolved_slow_tail_end": 136.8,
+  "terminal_time_claim": null,
+  "tau_int_descriptive": {
+    "value": 0.1756,
+    "sem": 0.0194,
+    "definition": "integral of G through the resolved diagnostic region divided by the full G(0); dominated by the short-time modulus and not a useful long-tail terminal time"
+  },
+  "fixed_cutoff_duration_rule": {
+    "typical_T_over_tc_for_10_to_15_percent": 50,
+    "cutoffs": [10, 20, 50],
+    "status": "empirical planning rule for this system and estimator, not universal"
+  },
+  "fixed_cutoff_integrals": {
+    "10": 5.455,
+    "20": 6.803,
+    "50": 8.872,
+    "100": 10.199,
+    "200": 12.133,
+    "300": 13.678,
+    "500": 12.05,
+    "750": 11.589,
+    "1000": 11.929
+  },
+  "eta0_status": "not established",
+  "diffusion": {
+    "D_nonassoc": 0.00177,
+    "candidate_fits": {
+      "250-500": 0.0018042,
+      "500-1000": 0.0017658,
+      "250-1000": 0.001774
+    },
+    "strict_exponent_interval": "approximately 705-1000",
+    "wording": "stable long-time diffusion coefficient with motion approaching/consistent with the Fickian regime; not a claim of a perfectly asymptotic alpha=1 plateau"
+  }
+}

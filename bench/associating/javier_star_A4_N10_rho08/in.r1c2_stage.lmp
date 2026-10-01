@@ -1,0 +1,55 @@
+# Restart-safe staged R1-C2 continuation.  This input never resets timestep.
+units lj
+atom_style bond
+boundary p p p
+special_bonds fene
+atom_modify map yes
+read_restart ${RESTART}
+group stickers type 2
+group stars type 1 2
+bond_style fene
+bond_coeff 1 30.0 1.5 1.0 1.0
+variable rwca equal 2.0^(1.0/6.0)
+pair_style hybrid/overlay lj/cut ${rwca} associating
+pair_coeff * * lj/cut 1.0 1.0 ${rwca}
+pair_coeff * * associating 30.0 1.5 8.0
+neighbor 0.6 bin
+neigh_modify every 1 delay 1 check yes
+comm_modify vel yes
+timestep 0.01
+fix integrate all nve
+fix thermostat all langevin 1.0 1.0 2.0 ${LANGEVIN_SEED} zero yes
+fix kinetics stickers associating/kinetics 100 ${KINETICS_SEED} 10.0 4.0 1.0 ${rwca} timing event_log ${EVENT_LOG}
+
+# Capture the active state before the first chemistry sweep in Stage 1.
+if "${WRITE_INITIAL} == 1" then "write_associating_network ${INITIAL_NETWORK} fix kinetics"
+
+compute press all pressure thermo_temp
+variable pxx equal c_press[1]
+variable pyy equal c_press[2]
+variable pzz equal c_press[3]
+variable pxy equal c_press[4]
+variable pxz equal c_press[5]
+variable pyz equal c_press[6]
+variable nxy equal c_press[1]-c_press[2]
+variable nxz equal c_press[1]-c_press[3]
+variable nyz equal c_press[2]-c_press[3]
+variable st equal step
+fix raw all print 1 "${st} ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz}" file ${OUT_PREFIX}.raw screen no title "# step Pxx Pyy Pzz Pxy Pxz Pyz"
+fix corr all ave/correlate/long 1 100000 v_pxy v_pxz v_pyz v_nxy v_nxz v_nyz type auto file ${OUT_PREFIX}.gt overwrite ncorr 40
+variable temp_now equal temp
+variable ep equal pe
+fix diagnostics all ave/time 1000 1 1000 v_temp_now v_ep c_press[1] c_press[2] c_press[3] c_press[4] c_press[5] c_press[6] f_kinetics[1] file ${OUT_PREFIX}.diagnostics mode scalar ave one format "%16.12g"
+
+# Direct per-star unwrapped COM rows: row, molecule_id, xu, yu, zu.
+compute star_chunks stars chunk/atom molecule nchunk once ids once compress yes
+compute star_ids stars property/chunk star_chunks id
+compute star_com stars com/chunk star_chunks
+fix starcom stars ave/time ${COM_EVERY} 1 ${COM_EVERY} c_star_ids c_star_com[*] file ${OUT_PREFIX}.com mode vector ave one
+
+thermo 1000
+thermo_style custom step temp pe c_press[1] c_press[2] c_press[3] c_press[4] c_press[5] c_press[6] f_kinetics[1]
+thermo_modify norm no
+run ${STAGE_STEPS}
+write_associating_network ${FINAL_NETWORK} fix kinetics
+write_restart ${FINAL_RESTART}

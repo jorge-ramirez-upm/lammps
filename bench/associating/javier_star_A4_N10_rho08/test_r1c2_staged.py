@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+import importlib.util
+import os
+import pathlib
+import subprocess
+import tempfile
+import unittest
+
+import numpy as np
+
+HERE = pathlib.Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location("staged", HERE / "analyze_r1c2_staged.py")
+staged = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(staged)
+
+
+class R1C2StagedTest(unittest.TestCase):
+    def test_concatenation_duplicate_gap_and_overlap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            a = root / "a.raw"; b = root / "b.raw"; gap = root / "gap.raw"; mismatch = root / "mismatch.raw"
+            rows = lambda steps: "# step Pxx Pyy Pzz Pxy Pxz Pyz\n" + "\n".join(
+                f"{step} 1 1 1 0 0 0" for step in steps) + "\n"
+            a.write_text(rows([0, 1, 2])); b.write_text(rows([2, 3])); gap.write_text(rows([5])); mismatch.write_text(rows([1, 4]))
+            self.assertEqual(len(staged.concatenate_raw([a, b])), 4)
+            with self.assertRaises(ValueError): staged.concatenate_raw([a, gap])
+            with self.assertRaises(ValueError): staged.concatenate_raw([a, mismatch])
+
+    def test_com_continuation_duplicate_and_gap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            content = ("# TimeStep Number-of-rows\n# Row ids x y z\n"
+                       "0 2\n1 11 0 0 0\n2 12 1 0 0\n"
+                       "100 2\n1 11 1 0 0\n2 12 2 0 0\n")
+            a = root / "a.com"; b = root / "b.com"; gap = root / "gap.com"
+            a.write_text(content)
+            b.write_text("# TimeStep Number-of-rows\n# Row ids x y z\n100 2\n1 11 1 0 0\n2 12 2 0 0\n200 2\n1 11 2 0 0\n2 12 3 0 0\n")
+            gap.write_text(content.replace("0 2", "300 2", 1))
+            self.assertEqual(len(staged.concatenate_com([a, b])), 3)
+            with self.assertRaises(ValueError): staged.concatenate_com([a, gap])
+
+    def test_network_replay_and_lifetimes(self):
+        initial = {(9, 10)}
+        events = [
+            staged.Event(1, "C", 1, 2, 1, 1),
+            staged.Event(4, "B", 1, 2, 1, 1),
+            staged.Event(5, "C", 1, 2, 1, 1),
+            staged.Event(6, "B", 1, 2, 1, 1),
+            staged.Event(8, "C", 1, 3, 1, 2),
+            staged.Event(9, "B", 1, 3, 1, 2),
+            staged.Event(10, "C", 4, 5, 2, 3),
+        ]
+        self.assertEqual(staged.replay_network(initial, events), {(4, 5), (9, 10)})
+        records = staged.lifetime_records(initial, events, end_timestep=100)
+        renorm = records["renormalized"]
+        self.assertTrue(any(row["termination"] == "third_partner" and row["duration"] == 5 for row in renorm))
+        self.assertTrue(any(row["right_censored"] for row in renorm))
+        self.assertTrue(any(row["left_censored"] for row in records["bare"]))
+
+    def test_bare_and_renormalized_survival(self):
+        initial = set()
+        events = [staged.Event(1, "C", 1, 2, 1, 1), staged.Event(4, "B", 1, 2, 1, 1)]
+        records = staged.lifetime_records(initial, events, end_timestep=10)
+        curve = staged.kaplan_meier(records["bare"])
+        self.assertEqual(curve[-1]["events"], 1)
+        self.assertEqual(staged.characteristic_times(curve)["median"], 3.0)
+
+    def test_malformed_event_and_network_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            bad_event = root / "bad.events"; bad_event.write_text("1 C 2 1 1 1\n")
+            bad_network = root / "bad.network"; bad_network.write_text("2 1 1 1\n")
+            with self.assertRaises(ValueError): staged.read_events(bad_event)
+            with self.assertRaises(ValueError): staged.read_network(bad_network)
+
+    def test_launcher_requires_explicit_authorization(self):
+        launcher = HERE / "run_r1c2_staged_linux.sh"
+        environment = os.environ.copy()
+        environment.pop("AUTHORIZE_R1C2", None)
+        environment["LMP"] = "/bin/true"
+        result = subprocess.run([str(launcher)], cwd=HERE, env=environment,
+                                text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AUTHORIZE_R1C2", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
