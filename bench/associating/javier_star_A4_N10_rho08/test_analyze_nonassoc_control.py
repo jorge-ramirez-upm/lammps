@@ -18,11 +18,15 @@ class NonassocControlTest(unittest.TestCase):
         n = 1001
         raw = np.zeros((n, 7)); raw[:, 0] = np.arange(n)
         raw[:, 1:4] = 1.0
-        summary, rows, cutoffs, blocks, block_summary, uncertainty = control._rheology_rows(
+        summary, rows, cutoffs, blocks, block_summary, uncertainty, terminal = control._rheology_rows(
             raw, [1.0, 5.0], [1.0, 2.0], [2], 10.0, 1.0, 0.01, 2.0)
         self.assertEqual([item["duration"] for item in summary], [1.0, 5.0])
         self.assertTrue(any(item["cutoff"] == 2.0 for item in cutoffs))
+        self.assertTrue(any(item["source"] == "blocks" and item["eta_sem"] is not None for item in cutoffs))
+        stability = control.fixed_cutoff_stability(cutoffs)
+        self.assertTrue(stability["cutoffs"])
         self.assertTrue(block_summary)
+        self.assertIn("first_G_below_block_SEM", terminal)
 
     def test_known_fickian_msd(self):
         rng = np.random.default_rng(19)
@@ -33,8 +37,35 @@ class NonassocControlTest(unittest.TestCase):
         time, msd = control.msd_from_com(com, dt)
         alpha, result = control.diffusion_diagnostics(time, msd)
         self.assertAlmostEqual(result["D"], diffusion, delta=0.06)
+        self.assertTrue(result["D_candidates"])
+        self.assertLessEqual(max(item["t_max"] for item in result["D_candidates"]), time[-1] / 5 + 1e-12)
         self.assertGreater(np.nanmedian(alpha[-50:]), 0.8)
         self.assertLess(np.nanmedian(alpha[-50:]), 1.2)
+
+    def test_diffusion_requires_sustained_window(self):
+        time = np.arange(0.0, 10.1, 0.1)
+        msd = 6.0 * 0.5 * time
+        msd[1:5] *= np.array([0.2, 0.4, 0.7, 0.9])
+        _, result = control.diffusion_diagnostics(time, msd, sustained_points=7)
+        self.assertIsNotNone(result["fickian_onset"])
+        self.assertGreaterEqual(result["fickian_window_end"], result["fickian_onset"])
+        self.assertTrue(all(item["t_max"] <= 2.0 + 1e-12 for item in result["D_candidates"]))
+
+    def test_terminal_diagnostic_does_not_invent_tau(self):
+        rows = []
+        block_rows = []
+        for lag, mean in ((0.0, 4.0), (1.0, 2.0), (2.0, 0.2), (3.0, -0.1), (4.0, 0.3)):
+            for block in (1, 2, 3, 4, 5):
+                block_rows.append({"blocks": 5, "block": block, "lag": lag,
+                                   "G": mean, "eta": mean * (lag + 1)})
+            rows.append({"blocks": 5, "lag": lag, "G_mean": mean,
+                         "G_sd": 0.4, "G_sem": 0.2,
+                         "G_sd_over_abs_mean": abs(0.4 / mean) if mean else None})
+        diagnostic = control.terminal_diagnostic(rows, block_rows, [5])
+        self.assertIsNone(diagnostic.get("tau_term"))
+        self.assertEqual(diagnostic["first_G_below_block_SEM"], 2.0)
+        self.assertEqual(diagnostic["first_G_below_block_SD"], 2.0)
+        self.assertEqual(diagnostic["longest_sustained_positive_interval"]["end"], 2.0)
 
     def test_direct_com_output_preserves_ids_and_unwrapped_crossing(self):
         with tempfile.NamedTemporaryFile(mode="w+") as handle:

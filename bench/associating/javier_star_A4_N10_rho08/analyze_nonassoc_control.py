@@ -42,12 +42,13 @@ def _rheology_rows(raw, durations, cutoffs, blocks, volume, temperature, dt, max
                                     "safe_lag_fraction": cutoff / duration})
         duration_summary.append({"duration": duration, "G0": float(modulus[0]),
                                  "R_iso_0": float(cn[0] / cs[0]) if cs[0] else None,
-                                 "eta_final": float(eta[-1]),
                                  "G_over_G0_crossing_0.1": r1c1.first_crossing(time, normalized, .1),
                                  "G_over_G0_crossing_0.01": r1c1.first_crossing(time, normalized, .01)})
 
     block_rows = []
-    lags = tuple(sorted(set(cutoffs)))
+    # Use the full common lag grid for the block-resolved tail diagnostic.
+    lags = tuple(np.arange(0.0, max_lag + dt / 2.0, dt))
+    block_cutoff_rows = []
     for nblocks in blocks:
         for block, values in enumerate(np.array_split(raw, nblocks), 1):
             if len(values) < 2:
@@ -73,11 +74,113 @@ def _rheology_rows(raw, durations, cutoffs, blocks, volume, temperature, dt, max
                                   "G_sd": sd, "G_sem": sd / math.sqrt(len(values)),
                                   "G_sd_over_abs_mean": sd / abs(mean) if mean else None,
                                   "eta_mean": float(etas.mean()),
-                                  "eta_sd": float(etas.std(ddof=1)) if len(etas) > 1 else 0.0})
+                                  "eta_sd": float(etas.std(ddof=1)) if len(etas) > 1 else 0.0,
+                                  "eta_sem": float(etas.std(ddof=1) / math.sqrt(len(etas))) if len(etas) > 1 else 0.0})
+    # Nested-duration values are retained, while these rows add block SEMs for
+    # every requested fixed cutoff.  eta_final at the full trajectory length
+    # is deliberately never used as a convergence diagnostic.
+    for nblocks in blocks:
+        rows = [row for row in block_rows if row["blocks"] == nblocks]
+        for cutoff in cutoffs:
+            values = [row for row in rows if abs(row["lag"] - cutoff) <= dt / 2]
+            if not values:
+                continue
+            etas = np.asarray([row["eta"] for row in values])
+            mean = float(etas.mean())
+            sd = float(etas.std(ddof=1)) if len(etas) > 1 else 0.0
+            block_cutoff_rows.append({"source": "blocks", "duration": float(values[0]["block_duration"]),
+                                      "cutoff": float(cutoff), "blocks": nblocks,
+                                      "eta_cutoff": mean, "eta_sd": sd,
+                                      "eta_sem": sd / math.sqrt(len(etas)) if len(etas) > 1 else 0.0,
+                                      "safe_lag_fraction": float(cutoff / values[0]["block_duration"])})
+    # Put the duration rows after the block rows with a common schema.
+    cutoff_rows = [{"source": "nested", "duration": row["duration"], "cutoff": row["cutoff"],
+                    "blocks": None, "eta_cutoff": row["eta_cutoff"], "eta_sd": None,
+                    "eta_sem": None, "safe_lag_fraction": row["safe_lag_fraction"]}
+                   for row in cutoff_rows] + block_cutoff_rows
     uncertainty = {str(n): next((row["lag"] for row in block_summary
                                  if row["blocks"] == n and row["G_sd_over_abs_mean"] is not None
                                  and row["G_sd_over_abs_mean"] >= 1.0), None) for n in blocks}
-    return duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty
+    terminal = terminal_diagnostic(block_summary, block_rows, blocks)
+    return duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, terminal
+
+
+def _first_lag(rows, predicate):
+    for row in rows:
+        if predicate(row):
+            return float(row["lag"])
+    return None
+
+
+def terminal_diagnostic(block_summary, block_rows, blocks):
+    """Describe the slow stress tail without asserting a single terminal time."""
+    preferred = 5 if 5 in blocks else (max(blocks) if blocks else None)
+    rows = sorted((row for row in block_summary if row["blocks"] == preferred), key=lambda row: row["lag"])
+    if not rows:
+        return {"status": "unresolved", "block_scheme": preferred}
+    below_sem = _first_lag(rows[1:], lambda row: row["G_mean"] <= row["G_sem"])
+    below_sd = _first_lag(rows[1:], lambda row: row["G_mean"] <= row["G_sd"])
+    positive_runs = []
+    run = []
+    for row in rows:
+        if row["G_mean"] > 0:
+            run.append(row)
+        elif run:
+            positive_runs.append(run); run = []
+    if run:
+        positive_runs.append(run)
+    positive_run = max(positive_runs, key=len) if positive_runs else []
+    positive_end = positive_run[-1]["lag"] if positive_run else None
+    positive_start = positive_run[0]["lag"] if positive_run else None
+    # Truncate the integral at the first loss of block-SEM resolution; later
+    # noisy re-crossings do not extend the claimed resolved window.
+    resolved_end = below_sem if below_sem is not None else rows[-1]["lag"]
+    integral = None
+    if resolved_end is not None and resolved_end > 0:
+        eta_rows = [row for row in block_rows if row["blocks"] == preferred and
+                    row["lag"] <= resolved_end + 1e-12]
+        if eta_rows:
+            by_block = {}
+            for row in eta_rows:
+                by_block[row["block"]] = row
+            eta = np.asarray([row["eta"] for row in by_block.values()])
+            mean = float(eta.mean()); sd = float(eta.std(ddof=1)) if len(eta) > 1 else 0.0
+            g0 = rows[0]["G_mean"]
+            if g0 > 0:
+                integral = {"cutoff": float(resolved_end), "tau_int": mean / g0,
+                            "tau_int_sem": sd / math.sqrt(len(eta)) / g0 if len(eta) > 1 else 0.0,
+                            "definition": "block mean cumulative integral divided by G(0), truncated when block mean first falls below its SEM"}
+    return {"status": "descriptive_only", "block_scheme": preferred,
+            "first_G_below_block_SEM": below_sem,
+            "first_G_below_block_SD": below_sd,
+            "longest_sustained_positive_interval": {"start": positive_start, "end": positive_end,
+                                                       "duration": (positive_end - positive_start) if positive_run else None},
+            "integral_relaxation": integral,
+            "definition": "No single tau_term is claimed; all ranges are block-resolved diagnostics."}
+
+
+def fixed_cutoff_stability(cutoff_rows):
+    """Compare nested-duration spread and block SEM at each fixed cutoff."""
+    result = []
+    cutoffs = sorted({row["cutoff"] for row in cutoff_rows})
+    for cutoff in cutoffs:
+        nested = np.asarray([row["eta_cutoff"] for row in cutoff_rows
+                             if row["cutoff"] == cutoff and row["source"] == "nested"
+                             and row["safe_lag_fraction"] <= 0.2])
+        block = [row for row in cutoff_rows if row["cutoff"] == cutoff and row["source"] == "blocks"
+                 and row["safe_lag_fraction"] <= 0.2]
+        if not len(nested) or not block:
+            continue
+        nested_mean = float(nested.mean())
+        nested_relative_span = float((nested.max() - nested.min()) / max(abs(nested_mean), 1e-30))
+        block_relative_sem = float(max(row["eta_sem"] for row in block) /
+                                   max(abs(np.mean([row["eta_cutoff"] for row in block])), 1e-30))
+        result.append({"cutoff": float(cutoff), "nested_relative_span": nested_relative_span,
+                       "block_relative_sem": block_relative_sem,
+                       "stable_at_25_percent": bool(nested_relative_span <= 0.25 and block_relative_sem <= 0.25)})
+    stable = [row["cutoff"] for row in result if row["stable_at_25_percent"]]
+    return {"criteria": "only durations with cutoff/T <= 0.2 are compared; nested duration span and maximum block SEM each <= 25% of the cutoff integral",
+            "cutoffs": result, "largest_stable_cutoff": max(stable) if stable else None}
 
 
 def _open_dump(path):
@@ -155,25 +258,58 @@ def msd_from_com(com, dt):
     return np.arange(nframes, dtype=float) * dt, result
 
 
-def diffusion_diagnostics(time, msd):
-    valid = (time > 0) & (msd > 0)
+def _rolling_log_exponent(time, msd, window=9):
+    """Local log-log slope from a centered rolling regression."""
+    time = np.asarray(time, dtype=float); msd = np.asarray(msd, dtype=float)
     alpha = np.full_like(msd, np.nan)
-    alpha[valid] = np.gradient(np.log(msd[valid]), np.log(time[valid]))
-    indices = np.flatnonzero(valid)
-    tail = indices[int(len(indices) * .75):] if len(indices) else []
-    if len(tail) >= 2:
-        slope, _ = np.polyfit(time[tail], msd[tail], 1)
-        diffusion = float(slope / 6.0)
-    else:
-        slope = diffusion = None
-    onset = None
-    for index in range(1, len(alpha) - 5):
-        window = alpha[index:index + 5]
-        if np.all(np.isfinite(window)) and .8 <= np.median(window) <= 1.2:
-            onset = float(time[index]); break
-    return alpha, {"D": diffusion, "late_msd_slope": float(slope) if slope is not None else None,
-                   "fickian_onset": onset,
-                   "definition": "late linear MSD slope divided by 6; onset is the first five-point alpha window with median 0.8..1.2"}
+    valid = (time > 0) & (msd > 0)
+    half = max(2, int(window) // 2)
+    for index in range(half, len(time) - half):
+        sample = slice(index - half, index + half + 1)
+        if np.all(valid[sample]):
+            alpha[index] = np.polyfit(np.log(time[sample]), np.log(msd[sample]), 1)[0]
+    return alpha
+
+
+def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
+                          sustained_points=7):
+    valid = (time > 0) & (msd > 0)
+    alpha = _rolling_log_exponent(time, msd)
+    limit = float(time[-1] * max_fraction)
+    candidates = (("T/20_to_T/10", 0.05, 0.10),
+                  ("T/10_to_T/5", 0.10, 0.20),
+                  ("T/20_to_T/5", 0.05, 0.20))
+    fits = []
+    for name, lo_fraction, hi_fraction in candidates:
+        lo = time[-1] * lo_fraction; hi = min(time[-1] * hi_fraction, limit)
+        selected = valid & (time >= lo) & (time <= hi)
+        if np.count_nonzero(selected) < 4:
+            continue
+        slope, intercept = np.polyfit(time[selected], msd[selected], 1)
+        fits.append({"window": name, "t_min": float(lo), "t_max": float(hi),
+                     "D": float(slope / 6.0), "slope": float(slope),
+                     "points": int(np.count_nonzero(selected))})
+    diffusion = float(np.median([fit["D"] for fit in fits])) if fits else None
+    d_values = np.asarray([fit["D"] for fit in fits], dtype=float)
+    stable = bool(len(d_values) > 1 and np.ptp(d_values) / max(abs(np.mean(d_values)), 1e-30) <= 0.25)
+    good = valid & (time <= limit) & np.isfinite(alpha) & (abs(alpha - 1.0) <= exponent_tolerance)
+    onset = None; end = None
+    run_start = None
+    for index, is_good in enumerate(good):
+        if is_good and run_start is None:
+            run_start = index
+        if (not is_good or index == len(good) - 1) and run_start is not None:
+            run_end = index if is_good and index == len(good) - 1 else index - 1
+            if run_end - run_start + 1 >= sustained_points:
+                onset = float(time[run_start]); end = float(time[run_end]); break
+            run_start = None
+    return alpha, {"D": diffusion, "D_candidates": fits,
+                   "D_candidate_stable": stable,
+                   "D_fit_max_fraction_of_total_lag": max_fraction,
+                   "fickian_onset": onset, "fickian_window_end": end,
+                   "fickian_window_points": sustained_points,
+                   "fickian_exponent_tolerance": exponent_tolerance,
+                   "definition": "D is the median of candidate linear MSD fits restricted to T/20..T/5; onset is the first sustained rolling log-log exponent window consistent with 1."}
 
 
 def write_csv(path, fields, rows):
@@ -202,8 +338,9 @@ def main():
     durations = [float(x) for x in args.durations.split(",") if x]
     cutoffs = [float(x) for x in args.cutoffs.split(",") if x]
     blocks = [int(x) for x in args.blocks.split(",") if x]
-    duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty = _rheology_rows(
+    duration_summary, duration_rows, cutoff_rows, block_rows, block_summary, uncertainty, terminal = _rheology_rows(
         raw, durations, cutoffs, blocks, args.volume, args.temperature, args.dt, args.max_lag)
+    cutoff_stability = fixed_cutoff_stability(cutoff_rows)
     frame_data = list(com_frames(args.com_output, expected_stars=args.stars))
     if not frame_data:
         raise ValueError("no trajectory frames")
@@ -215,22 +352,15 @@ def main():
     alpha, diffusion = diffusion_diagnostics(time, msd)
     stress_time, cs, cn, difference, modulus, eta = r1c1._modulus(
         raw, args.volume, args.temperature, args.dt)
-    reference_index = min(int(round(1.0 / args.dt)), len(modulus) - 1)
-    slow_reference = modulus[reference_index]
-    slow_candidate = None
-    if slow_reference > 0 and stress_time[-1] > stress_time[reference_index]:
-        slow_candidate = r1c1.first_crossing(
-            stress_time[reference_index:], modulus[reference_index:] / slow_reference, 1.0 / math.e)
-    uncertainty_lag = uncertainty.get("5")
-    tau_term = (slow_candidate if slow_candidate is not None and
-                (uncertainty_lag is None or slow_candidate < uncertainty_lag) else None)
     write_csv(out / "control_nonassoc.correlations.csv",
               ["time", "Cs", "Cn_over4", "D", "G", "eta", "useful"],
               (dict(time=float(t), Cs=float(s), Cn_over4=float(n), D=float(d),
                     G=float(g), eta=float(e), useful=1)
                for t, s, n, d, g, e in zip(stress_time, cs, cn, difference, modulus, eta)))
     write_csv(out / "control_nonassoc.duration_convergence.csv", list(duration_rows[0]), duration_rows)
-    write_csv(out / "control_nonassoc.fixed_cutoff.csv", list(cutoff_rows[0]), cutoff_rows)
+    write_csv(out / "control_nonassoc.fixed_cutoff.csv",
+              ["source", "duration", "cutoff", "blocks", "eta_cutoff", "eta_sd", "eta_sem", "safe_lag_fraction"],
+              cutoff_rows)
     write_csv(out / "control_nonassoc.block_statistics.csv", list(block_rows[0]), block_rows)
     write_csv(out / "control_nonassoc.block_summary.csv", list(block_summary[0]), block_summary)
     write_csv(out / "control_nonassoc.msd.csv", ["time", "g_CM", "alpha"],
@@ -238,11 +368,11 @@ def main():
     (out / "control_nonassoc.diffusion.json").write_text(json.dumps(diffusion, indent=2, sort_keys=True) + "\n")
     report = {"rows": len(raw), "raw_duration": float((len(raw) - 1) * args.dt),
               "durations": duration_summary, "block_uncertainty_lag": uncertainty,
-              "slow_reference_lag": min(1.0, float(stress_time[-1])),
-              "slow_reference_1_over_e_candidate": slow_candidate,
-              "tau_term": tau_term,
-              "tau_term_status": "resolved before block uncertainty" if tau_term is not None else "unresolved or statistically ambiguous",
-              "tau_term_definition": "slow-reference analysis starts at t=1; a terminal time is claimed only if the slow-component 1/e crossing precedes block uncertainty",
+              "terminal_diagnostic": terminal,
+              "fixed_cutoff_stability": cutoff_stability,
+              "tau_term": None,
+              "tau_term_status": "not claimed",
+              "tau_term_definition": "No single terminal time is inferred from a 1/e crossing; use the block-resolved SEM/SD crossings, positive interval, and truncated integral diagnostic.",
               "com_frames": len(frame_data), "stars": int(com.shape[1]),
               "com_duration": float(time[-1]), "diffusion": diffusion,
               "no_zero_shear_viscosity_claim": True}

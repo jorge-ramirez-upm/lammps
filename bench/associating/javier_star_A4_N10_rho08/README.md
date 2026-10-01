@@ -192,8 +192,12 @@ nested-duration rheology, fixed-cutoff Green–Kubo, block uncertainty, star-COM
 MSD, local logarithmic slope, and diffusion diagnostics. A short regression
 smoke test compares this output with COMs reconstructed from an optional atom
 dump; the latter is not needed for production analysis.
-The slow rheological time is not defined by the first microscopic `G/G0=0.1`
-crossing; the analyzer reports a slow-reference diagnostic beginning after
-the local-force drop and withholds a terminal-time claim when block noise
-arrives first. No full production simulation or long associating R1-C2
+The analyzer makes no single terminal-time claim from a `1/e` crossing: it
+reports block-SEM and block-SD loss-of-resolution lags, the longest positive
+block-mean interval, and a cumulative integral truncated at the first SEM
+crossing. Fixed-cutoff Green–Kubo values include block SEMs and a
+duration/block stability summary. Diffusion fits are restricted to windows
+ending by `T/5`; the reported Fickian onset requires a sustained rolling
+log-log exponent near one, and candidate-window `D` values are reported for
+stability. No full production simulation or long associating R1-C2
 continuation has been launched.
