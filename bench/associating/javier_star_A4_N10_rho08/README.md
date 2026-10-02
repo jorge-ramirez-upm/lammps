@@ -267,5 +267,12 @@ with its first frame as the local MSD origin. It gives candidate associating
 diffusion fits around `5.1–6.6e-4`, not yet stable and not strictly Fickian.
 The expanded fixed-cutoff diagnostics find a descriptive duration-converged
 range through `t_c=500`; this is not an automatic zero-shear-viscosity claim.
-The stage summary is diagnostic only and recommends `CONTINUE`; Stage 2 and
-Stage 3 have not been launched.
+Stage 2 has now also completed. Its repaired analysis is written to
+`r1c2_runs/analysis_stage2_repaired2/`; the duration grid reaches `T=30000`,
+and the longer prefixes remove the former apparent `t_c=500–1000` plateau.
+The Stage-2 summary therefore reports `eta_0_status=not established`.
+Candidate COM slopes are mutually similar around `4.7e-4`, but the measured
+logarithmic exponent remains about `0.62` over the principal windows, so this
+is labeled an effective candidate slope rather than a stable long-time
+diffusion coefficient. The diagnostic stage decision is `CONTINUE`; Stage 3
+has not been launched.

@@ -248,6 +248,30 @@ def write_csv(path, fields, rows):
         writer.writeheader(); writer.writerows(rows)
 
 
+def duration_grid(available_duration, spacing=5000.0):
+    """Return cumulative prefixes through the longest available trajectory."""
+    if available_duration < 0 or spacing <= 0:
+        raise ValueError("duration and spacing must be positive")
+    count = int(np.floor((available_duration + 1e-9) / spacing))
+    durations = [float(spacing * index) for index in range(1, count + 1)]
+    if not durations or available_duration - durations[-1] > 1e-8:
+        durations.append(float(available_duration))
+    return durations
+
+
+def adaptive_stage_decision(rheology, diffusion, renormalized_summary):
+    """Diagnostic continuation gate; never launches a later stage."""
+    reasons = []
+    if rheology.get("eta0_status") != "supported descriptively":
+        reasons.append("zero-shear viscosity plateau is not established")
+    if not diffusion.get("strict_exponent_criterion_passed", False):
+        reasons.append("asymptotic Fickian COM diffusion is not established")
+    if renormalized_summary.get("one_over_e_time") is None:
+        reasons.append("renormalized survival has no resolved 1/e crossing")
+    return {"recommendation": "CONTINUE" if reasons else "STOP", "reasons": reasons,
+            "diagnostic_only": True, "next_stage_not_launched": True}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--r1c1-raw", required=True)
@@ -283,7 +307,7 @@ def main():
         stress_time, cs, cn, difference, modulus, eta = r1c1._modulus(
             raw, args.volume, args.temperature, args.dt)
         available_duration = float(stress_time[-1])
-        durations = [duration for duration in (5000, 10000, 15000, 20000) if duration <= available_duration]
+        durations = duration_grid(available_duration)
         cutoffs = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500, 750, 1000]
         (duration_summary, duration_rows, cutoff_rows, block_rows, block_summary,
          uncertainty, tail_bins, terminal, duration_convergence) = nonassoc._rheology_rows(
@@ -312,7 +336,11 @@ def main():
         alpha, diffusion = nonassoc.diffusion_diagnostics(com_time, com_msd)
         diffusion["D_nonassoc_reference"] = 1.77e-3
         diffusion["D_vs_nonassoc_ratio"] = diffusion["D"] / 1.77e-3 if diffusion["D"] is not None else None
-        diffusion["wording"] = "stable long-time diffusion coefficient with motion approaching/consistent with the Fickian regime; not a claim of a perfectly asymptotic alpha=1 plateau"
+        diffusion["coefficient_status"] = ("asymptotic_candidate" if diffusion.get("strict_exponent_criterion_passed")
+                                            else "effective_candidate_slope")
+        diffusion["wording"] = ("candidate effective diffusion slope; linear-fit stability does not establish a long-time diffusion coefficient while the strict Fickian criterion fails"
+                                 if not diffusion.get("strict_exponent_criterion_passed") else
+                                 "diffusion fit is supported by the strict sustained Fickian diagnostic, without claiming a perfect alpha=1 plateau")
         write_csv(out / "r1c2_com_msd.csv", ["time", "g_CM", "alpha"],
                   (dict(time=float(t), g_CM=float(g), alpha=float(a)) for t, g, a in zip(com_time, com_msd, alpha)))
     else:
@@ -324,15 +352,7 @@ def main():
                   ["time_steps", "time", "survival", "at_risk", "events", "censored"], curve)
     bare_summary = lifetime_summary(records["bare"], kaplan_meier(records["bare"], args.dt), args.dt)
     renormalized_summary = lifetime_summary(records["renormalized"], kaplan_meier(records["renormalized"], args.dt), args.dt)
-    reasons = []
-    if rheology.get("eta0_status") != "supported descriptively":
-        reasons.append("zero-shear viscosity plateau is not established")
-    if not diffusion.get("D_candidate_stable", False):
-        reasons.append("associating COM diffusion fit is not yet stable")
-    if renormalized_summary["one_over_e_time"] is None:
-        reasons.append("renormalized survival has no resolved 1/e crossing")
-    decision = {"recommendation": "CONTINUE" if reasons else "STOP", "reasons": reasons,
-                "diagnostic_only": True, "next_stage_not_launched": True}
+    decision = adaptive_stage_decision(rheology, diffusion, renormalized_summary)
     summary = {"raw_rows": int(len(raw)), "raw_start": int(raw[0, 0]) if len(raw) else None,
                "raw_end": int(raw[-1, 0]) if len(raw) else None,
                "stress": stress_summary,

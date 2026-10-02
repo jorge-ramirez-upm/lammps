@@ -16,6 +16,27 @@ spec.loader.exec_module(staged)
 
 
 class R1C2StagedTest(unittest.TestCase):
+    def test_duration_grid_reaches_available_prefix_and_future_stages(self):
+        self.assertEqual(staged.duration_grid(30000),
+                         [5000.0, 10000.0, 15000.0, 20000.0, 25000.0, 30000.0])
+        self.assertEqual(staged.duration_grid(50000)[-3:], [40000.0, 45000.0, 50000.0])
+
+    def test_longer_prefix_can_remove_apparent_cutoff_convergence(self):
+        rows = []
+        for duration, eta in ((5000.0, 10.0), (10000.0, 10.2), (20000.0, 20.0)):
+            rows.append({"source": "nested", "duration": duration, "cutoff": 500.0,
+                         "eta_cutoff": eta, "safe_lag_fraction": 0.1})
+        convergence = staged.nonassoc.fixed_cutoff_duration_convergence(rows)
+        self.assertIsNone(convergence[0]["T_min_25pct"])
+
+    def test_nonfickian_motion_cannot_stop_stage(self):
+        decision = staged.adaptive_stage_decision(
+            {"eta0_status": "supported descriptively"},
+            {"D_candidate_stable": True, "strict_exponent_criterion_passed": False},
+            {"one_over_e_time": 2844.0})
+        self.assertEqual(decision["recommendation"], "CONTINUE")
+        self.assertIn("asymptotic Fickian", decision["reasons"][0])
+
     def test_concatenation_duplicate_gap_and_overlap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
