@@ -24,29 +24,38 @@ case "$STAGE" in
 esac
 if [[ "$STAGE" -gt 1 ]]; then
   previous=$((STAGE - 1))
-  [[ -f "$OUT/stage$previous/complete" ]] || { echo "Stage $previous is not complete; refusing Stage $STAGE" >&2; exit 3; }
+  previous_complete="$OUT/stage$previous/complete"
+  [[ -f "$previous_complete" ]] || { echo "Stage $previous is not complete; refusing Stage $STAGE" >&2; exit 3; }
 fi
 positive "$STAGE_STEPS" STAGE_STEPS
 RESTART=${RESTART:-$DEFAULT_RESTART}
 [[ -s "$RESTART" ]] || { echo "restart does not exist or is empty: $RESTART" >&2; exit 2; }
-if [[ "$STAGE" == 4 ]]; then
+input_restart_path=$(realpath "$RESTART")
+input_restart_sha256=$(sha256sum "$RESTART" | awk '{print $1}')
+if [[ "$STAGE" -gt 1 ]]; then
   expected_restart=$(realpath "$DEFAULT_RESTART")
-  restart_candidate=$(realpath "$RESTART")
-  [[ "$restart_candidate" == "$expected_restart" ]] || {
-    echo "Stage 4 requires the Stage 3 restart: $expected_restart" >&2; exit 3;
+  [[ "$input_restart_path" == "$expected_restart" ]] || {
+    echo "Stage $STAGE requires the previous stage output restart: $expected_restart" >&2; exit 3;
   }
-  grep -q 'stage=3 ' "$OUT/stage3/complete" || {
-    echo "Stage 3 completion provenance is invalid; refusing Stage 4" >&2; exit 3;
+  output_record="$OUT/stage$previous/output_restart_provenance.txt"
+  if [[ -f "$output_record" ]]; then
+    recorded_output_path=$(sed -n 's/.*output_restart_path=\([^ ]*\).*/\1/p' "$output_record")
+    recorded_output_sha256=$(sed -n 's/.*output_restart_sha256=\([^ ]*\).*/\1/p' "$output_record")
+  else
+    recorded_output_path=$(sed -n 's/.*output_restart_path=\([^ ]*\).*/\1/p' "$previous_complete")
+    recorded_output_sha256=$(sed -n 's/.*output_restart_sha256=\([^ ]*\).*/\1/p' "$previous_complete")
+  fi
+  [[ -n "$recorded_output_path" && -n "$recorded_output_sha256" ]] || {
+    echo "Stage $previous output restart provenance is missing; run backfill_r1c2_restart_provenance.sh" >&2; exit 3;
   }
-  recorded_restart_sha=$(sed -n 's/.*restart_sha256=\([^ ]*\).*/\1/p' "$OUT/stage3/complete")
-  [[ -n "$recorded_restart_sha" && "$recorded_restart_sha" == "$(sha256sum "$RESTART" | awk '{print $1}')" ]] || {
-    echo "Stage 3 restart does not match completion provenance; refusing Stage 4" >&2; exit 3;
+  [[ "$(realpath "$recorded_output_path")" == "$input_restart_path" &&
+     "$recorded_output_sha256" == "$input_restart_sha256" ]] || {
+    echo "Stage $STAGE input restart does not match Stage $previous output provenance; refusing Stage $STAGE" >&2; exit 3;
   }
 fi
-lmp_path=$(realpath "$LMP"); restart_path=$(realpath "$RESTART")
+lmp_path=$(realpath "$LMP"); restart_path="$input_restart_path"
 repo_sha=$(git -C "$root/../../.." rev-parse HEAD)
 lmp_sha256=$(sha256sum "$lmp_path" | awk '{print $1}')
-restart_sha256=$(sha256sum "$restart_path" | awk '{print $1}')
 stage_dir="$OUT/stage$STAGE"
 [[ ! -e "$stage_dir" ]] || { echo "refusing to overwrite existing $stage_dir" >&2; exit 3; }
 mkdir -p "$stage_dir"
@@ -54,13 +63,14 @@ prefix="$stage_dir/production"
 event_log="$stage_dir/events.dat"
 initial_network="$stage_dir/initial.network"
 final_network="$stage_dir/final.network"
+output_restart_path=$(realpath -m "$prefix.restart")
 initial_timestep=unknown
 if [[ -f "$OUT/stage$((STAGE - 1))/production.raw" ]]; then
   initial_timestep=$(tail -n 1 "$OUT/stage$((STAGE - 1))/production.raw" | awk '{print $1}')
 fi
 final_timestep=unknown
 if [[ "$initial_timestep" =~ ^[0-9]+$ ]]; then final_timestep=$((initial_timestep + STAGE_STEPS)); fi
-identity="git_sha=$repo_sha lmp_path=$lmp_path lmp_sha256=$lmp_sha256 mpi_np=$MPI_NP stage=$STAGE stage_steps=$STAGE_STEPS dt=0.01 initial_timestep=$initial_timestep final_timestep=$final_timestep com_every=$COM_EVERY online=$ONLINE langevin_seed=$LANGEVIN_SEED kinetics_seed=$KINETICS_SEED restart=$restart_path restart_sha256=$restart_sha256 event_logging=enabled write_initial=$WRITE_INITIAL out_dir=$stage_dir raw_path=$prefix.raw gt_path=$prefix.gt com_path=$prefix.com event_path=$event_log final_network_path=$final_network restart_path=$prefix.restart"
+identity="git_sha=$repo_sha lmp_path=$lmp_path lmp_sha256=$lmp_sha256 mpi_np=$MPI_NP stage=$STAGE stage_steps=$STAGE_STEPS dt=0.01 initial_timestep=$initial_timestep final_timestep=$final_timestep com_every=$COM_EVERY online=$ONLINE langevin_seed=$LANGEVIN_SEED kinetics_seed=$KINETICS_SEED input_restart_path=$restart_path input_restart_sha256=$input_restart_sha256 output_restart_path=$output_restart_path event_logging=enabled write_initial=$WRITE_INITIAL out_dir=$stage_dir raw_path=$prefix.raw gt_path=$prefix.gt com_path=$prefix.com event_path=$event_log final_network_path=$final_network restart_path=$output_restart_path"
 printf '%s\n' "$identity" > "$stage_dir/provenance.txt"
 mpirun -np "$MPI_NP" "$lmp_path" -log "$stage_dir/lammps.log" -screen none \
   -var RESTART "$restart_path" -var STAGE_STEPS "$STAGE_STEPS" \
@@ -74,5 +84,7 @@ for file in "${required_files[@]}"; do
   [[ -s "$file" ]] || { echo "required stage output missing: $file" >&2; exit 4; }
 done
 if [[ "$WRITE_INITIAL" == 1 ]]; then [[ -s "$initial_network" ]] || { echo "initial network missing" >&2; exit 4; }; fi
-printf '%s\n' "$identity" > "$stage_dir/complete"
+output_restart_sha256=$(sha256sum "$prefix.restart" | awk '{print $1}')
+printf '%s output_restart_sha256=%s\n' "$identity" "$output_restart_sha256" > "$stage_dir/complete"
+printf '%s output_restart_sha256=%s\n' "$identity" "$output_restart_sha256" > "$stage_dir/output_restart_provenance.txt"
 printf '%s\n' "R1-C2 stage $STAGE complete: $stage_dir"

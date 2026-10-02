@@ -175,8 +175,9 @@ class R1C2StagedTest(unittest.TestCase):
         launcher = (HERE / "run_r1c2_staged_linux.sh").read_text()
         self.assertIn('4) STAGE_STEPS=${STAGE_STEPS:-5000000}', launcher)
         self.assertIn('DEFAULT_RESTART="$OUT/stage3/production.restart"', launcher)
-        self.assertIn('grep -q \'stage=3 \' "$OUT/stage3/complete"', launcher)
-        self.assertIn('restart_sha256=', launcher)
+        self.assertIn('previous_complete="$OUT/stage$previous/complete"', launcher)
+        self.assertIn('input_restart_sha256=', launcher)
+        self.assertIn('output_restart_sha256=', launcher)
         self.assertIn('initial_timestep=', launcher)
         self.assertIn('final_timestep=', launcher)
         self.assertIn('event_path=$event_log', launcher)
@@ -194,8 +195,75 @@ class R1C2StagedTest(unittest.TestCase):
 
     def test_stage4_uses_stage3_as_only_resume_source_and_no_initial_network(self):
         launcher = (HERE / "run_r1c2_staged_linux.sh").read_text()
-        self.assertIn('[[ "$restart_candidate" == "$expected_restart" ]]', launcher)
+        self.assertIn('[[ "$input_restart_path" == "$expected_restart" ]]', launcher)
+        self.assertIn('output_record="$OUT/stage$previous/output_restart_provenance.txt"', launcher)
         self.assertIn('4) STAGE_STEPS=${STAGE_STEPS:-5000000}; DEFAULT_RESTART="$OUT/stage3/production.restart"; WRITE_INITIAL=0', launcher)
+
+    def test_legacy_restart_provenance_backfill_is_immutable_and_verified(self):
+        script = HERE / "backfill_r1c2_restart_provenance.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory); stage = root / "stage3"; stage.mkdir()
+            complete = stage / "complete"; complete.write_text("git_sha=old stage=3 stage_steps=2\n")
+            restart = stage / "production.restart"; restart.write_bytes(b"restart")
+            env = os.environ.copy(); env["OUT"] = str(root)
+            first = subprocess.run([str(script), "3"], env=env, text=True, capture_output=True)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            record = stage / "output_restart_provenance.txt"
+            self.assertTrue(record.exists())
+            original_complete = complete.read_text()
+            first_record = record.read_text()
+            second = subprocess.run([str(script), "3"], env=env, text=True, capture_output=True)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(complete.read_text(), original_complete)
+            self.assertEqual(record.read_text(), first_record)
+            self.assertIn("output_restart_sha256=", first_record)
+
+    def test_stage4_restart_gate_accepts_correct_and_rejects_modified_or_different_restart(self):
+        launcher = HERE / "run_r1c2_staged_linux.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory); stage3 = root / "stage3"; stage3.mkdir()
+            restart = stage3 / "production.restart"; restart.write_bytes(b"stage3 restart")
+            stage2 = root / "stage2"; stage2.mkdir()
+            stage2_restart = stage2 / "production.restart"; stage2_restart.write_bytes(b"stage2 restart")
+            (stage3 / "production.raw").write_text("5000000 1 1 1 0 0 0\n")
+            digest = subprocess.check_output(["sha256sum", str(restart)], text=True).split()[0]
+            stage2_digest = subprocess.check_output(["sha256sum", str(stage2_restart)], text=True).split()[0]
+            (stage3 / "complete").write_text(
+                f"stage=3 input_restart_path={stage2_restart.resolve()} input_restart_sha256={stage2_digest} "
+                f"output_restart_path={restart.resolve()} output_restart_sha256={digest}\n")
+            fake_bin = root / "bin"; fake_bin.mkdir()
+            fake_mpirun = fake_bin / "mpirun"
+            fake_mpirun.write_text("""#!/bin/sh
+while [ $# -gt 0 ]; do
+  if [ "$1" = -var ]; then key=$2; value=$3; eval "$key=\\\"$value\\\""; shift 3
+  else shift
+  fi
+done
+printf '5000000 1 1 1 0 0 0\\n' > "$OUT_PREFIX.raw"
+printf 'x\\n' > "$OUT_PREFIX.gt"
+printf 'x\\n' > "$OUT_PREFIX.com"
+printf 'x\\n' > "$EVENT_LOG"
+printf '1 2\\n' > "$FINAL_NETWORK"
+printf 'stage4 restart\\n' > "$FINAL_RESTART"
+""")
+            fake_mpirun.chmod(0o755)
+            env = os.environ.copy(); env.update({"AUTHORIZE_R1C2": "YES", "LMP": "/bin/true",
+                                                   "OUT": str(root), "STAGE": "4",
+                                                   "PATH": f"{fake_bin}:{env['PATH']}"})
+            accepted = subprocess.run([str(launcher)], cwd=HERE, env=env, text=True, capture_output=True)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertIn("output_restart_sha256=", (root / "stage4" / "complete").read_text())
+            (root / "stage4").rename(root / "stage4_saved")
+            restart.write_bytes(b"modified")
+            rejected_hash = subprocess.run([str(launcher)], cwd=HERE, env=env, text=True, capture_output=True)
+            self.assertEqual(rejected_hash.returncode, 3)
+            self.assertIn("does not match Stage 3 output provenance", rejected_hash.stderr)
+            other = root / "other.restart"; other.write_bytes(b"stage3 restart")
+            restart.write_bytes(b"stage3 restart")
+            env["RESTART"] = str(other)
+            rejected_path = subprocess.run([str(launcher)], cwd=HERE, env=env, text=True, capture_output=True)
+            self.assertEqual(rejected_path.returncode, 3)
+            self.assertIn("requires the previous stage output restart", rejected_path.stderr)
 
     def test_stage4_input_preserves_snapshot_boundary_without_new_history_origin(self):
         input_text = (HERE / "in.r1c2_stage.lmp").read_text()

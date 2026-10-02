@@ -305,3 +305,15 @@ network, restart, provenance, and completion files under
 `r1c2_runs/stage4/`, and refuses overwrite or a mismatched Stage-3 restart.
 The cumulative analyzer should then be run with `--stage-dir` for stages 1,
 2, 3, and 4; its existing dynamic duration grid reaches `T=100000`.
+
+Because the existing Stage 1–3 completion markers predate output-restart
+hashes, run this one-time migration before Stage 4:
+
+```bash
+OUT=$PWD/r1c2_runs ./backfill_r1c2_restart_provenance.sh 1 2 3
+```
+
+It preserves the original `complete` files and creates immutable
+`output_restart_provenance.txt` sidecars after checking each completion marker,
+restart path, and SHA-256. Re-running the command only verifies those sidecars;
+it does not launch MD.
