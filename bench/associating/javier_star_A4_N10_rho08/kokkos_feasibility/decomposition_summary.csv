@@ -1,0 +1,13 @@
+diagnostic,config,mpi_ranks,steps,loop_median_s,loop_min_s,loop_max_s,steps_per_s_median,cpu_over_gpu_speedup
+baseline,cpu,8,50000,79.0049,78.1638,79.5850,638.617,
+baseline,kk1,1,50000,43.5907,43.1800,43.6850,1153.73,1.8124
+com,cpu,8,50000,80.5972,79.7235,80.9246,625.033,
+com,kk1,1,50000,46.2221,45.6391,46.2841,1089.37,1.7437
+stress-every-1,cpu,8,50000,89.4634,88.9929,89.4741,560.399,
+stress-every-1,kk1,1,50000,151.167,148.885,151.273,333.411,0.5918
+stress-plus-com,cpu,8,50000,90.5802,89.9452,91.0015,555.235,
+stress-plus-com,kk1,1,50000,152.376,150.519,153.159,331.007,0.5945
+stress-plus-com-plus-correlate-long,cpu,8,50000,91.4908,90.7406,91.5992,549.086,
+stress-plus-com-plus-correlate-long,kk1,1,50000,150.284,149.455,150.734,334.127,0.6088
+stress-every-10,kk1,1,50000,55.0758,54.8756,55.2721,907.840,
+stress-every-100,kk1,1,50000,45.4533,45.3869,45.4929,1100.030,

@@ -1,0 +1,1 @@
+fix raw all print ${STRESS_EVERY} "${st} ${pxx} ${pyy} ${pzz} ${pxy} ${pxz} ${pyz}" file ${OUT_PREFIX}.raw screen no title "# step Pxx Pyy Pzz Pxy Pxz Pyz"

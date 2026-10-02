@@ -1,0 +1,1 @@
+fix starcom stars ave/time ${COM_EVERY} 1 ${COM_EVERY} c_star_ids c_star_com[*] file ${OUT_PREFIX}.com mode vector ave one

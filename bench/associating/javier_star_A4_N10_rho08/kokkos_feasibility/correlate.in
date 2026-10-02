@@ -1,0 +1,1 @@
+fix corr all ave/correlate/long 1 100000 v_pxy v_pxz v_pyz v_nxy v_nxz v_nyz type auto file ${OUT_PREFIX}.gt overwrite ncorr 40
