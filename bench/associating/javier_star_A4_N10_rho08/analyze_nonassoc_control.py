@@ -201,8 +201,12 @@ def terminal_diagnostic(tail_bins, block_rows, blocks, full_g0):
                             "tau_int_sem": sd / math.sqrt(len(eta)) / full_g0 if len(eta) > 1 else 0.0,
                             "definition": "block mean cumulative integral divided by the full trajectory zero-lag G(0), truncated when the coarse block mean first falls below its SEM; descriptive, not terminal"}
     return {"status": "descriptive_only", "block_scheme": preferred,
+            "resolution_scan_end": float(rows[-1]["lag_end"]),
             "first_G_below_block_SEM": below_sem,
             "first_G_below_block_SD": below_sd,
+            "resolution_loss_status": ("lost_by_SEM" if below_sem is not None else
+                                        "lost_by_SD" if below_sd is not None else
+                                        "not_lost_in_scanned_range"),
             "largest_contiguous_resolved_range": {
                 "start": resolved_run[0]["lag_start"] if resolved_run else None,
                 "end": resolved_run[-1]["lag_end"] if resolved_run else None,
@@ -258,23 +262,27 @@ def fixed_cutoff_duration_convergence(cutoff_rows, tolerances=(0.10, 0.15, 0.25)
         rows = sorted((row for row in cutoff_rows if row["source"] == "nested" and
                        row["cutoff"] == cutoff and row["safe_lag_fraction"] <= 0.2),
                       key=lambda row: row["duration"])
-        longest = rows[-1] if rows else None
+        block = [row for row in cutoff_rows if row["source"] == "blocks" and
+                 row["cutoff"] == cutoff and row["safe_lag_fraction"] <= 0.2]
+        supported = bool(block)
+        longest = rows[-1] if rows and supported else None
         output = {"cutoff": float(cutoff), "T_longest": longest["duration"] if longest else None,
                   "eta_from_longest_T": longest["eta_cutoff"] if longest else None,
-                  "T_over_cutoff": (longest["duration"] / cutoff) if longest else None}
+                  "T_over_cutoff": (longest["duration"] / cutoff) if longest else None,
+                  "supported_by_block_criteria": supported,
+                  "status": "supported" if supported else "unsupported_safe_lag_or_blocks"}
         for tolerance in tolerances:
             key = f"T_min_{int(round(tolerance * 100))}pct"
             selected = None
-            for index, candidate in enumerate(rows):
-                values = np.asarray([row["eta_cutoff"] for row in rows[index:]])
-                scale = max(abs(float(values.mean())), 1e-30)
-                if len(values) >= 2 and (values.max() - values.min()) / scale <= tolerance:
-                    selected = candidate["duration"]
-                    break
+            if supported:
+                for index, candidate in enumerate(rows):
+                    values = np.asarray([row["eta_cutoff"] for row in rows[index:]])
+                    scale = max(abs(float(values.mean())), 1e-30)
+                    if len(values) >= 2 and (values.max() - values.min()) / scale <= tolerance:
+                        selected = candidate["duration"]
+                        break
             output[key] = selected
             output[f"T_min_over_cutoff_{int(round(tolerance * 100))}pct"] = (selected / cutoff if selected else None)
-        block = [row for row in cutoff_rows if row["source"] == "blocks" and
-                 row["cutoff"] == cutoff and row["safe_lag_fraction"] <= 0.2]
         output["block_SEM"] = (max(row["eta_sem"] for row in block) if block else None)
         result.append(output)
     return result
@@ -283,7 +291,8 @@ def fixed_cutoff_duration_convergence(cutoff_rows, tolerances=(0.10, 0.15, 0.25)
 def cutoff_plateau(duration_convergence, tolerance=0.25, minimum_cutoffs=3):
     """Test a cutoff plateau only among duration-converged, block-resolved values."""
     usable = [row for row in duration_convergence
-              if row["T_min_25pct"] is not None and row["block_SEM"] is not None]
+              if row.get("supported_by_block_criteria", True) and
+              row["T_min_25pct"] is not None and row["block_SEM"] is not None]
     usable.sort(key=lambda row: row["cutoff"])
     runs = []
     current = []
@@ -433,7 +442,11 @@ def _sustained_exponent_window(time, alpha, limit, tolerance, min_duration):
 def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
                           sustained_points=7, alpha_windows=((250.0, 500.0),
                                                               (500.0, 1000.0),
-                                                              (250.0, 1000.0))):
+                                                              (250.0, 1000.0),
+                                                              (1000.0, 2000.0),
+                                                              (2000.0, 4000.0),
+                                                              (4000.0, 8000.0),
+                                                              (8000.0, 16000.0))):
     valid = (time > 0) & (msd > 0)
     alpha = _rolling_log_exponent(time, msd)
     limit = float(time[-1] * max_fraction)
@@ -467,9 +480,17 @@ def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
     strict = _sustained_exponent_window(time, alpha, limit, 0.1,
                                         max((limit * 0.1), (time[1] - time[0]) * sustained_points)
                                         if len(time) > 1 else 0.0)
+    later = _alpha_window_stats(time, alpha, alpha_windows[3:])
+    finite_later = [row for row in later if row["alpha_mean"] is not None]
+    trend = None
+    if len(finite_later) >= 2:
+        means = [row["alpha_mean"] for row in finite_later]
+        trend = ("toward_1" if means[-1] > means[0] + 0.05 else
+                 "persistently_subdiffusive" if max(means) < 0.9 else "mixed_or_flat")
     return alpha, {"D": diffusion, "D_candidates": fits,
                    "D_candidate_stable": stable,
                    "alpha_in_requested_windows": _alpha_window_stats(time, alpha, alpha_windows),
+                   "alpha_later_window_trend": trend,
                    "strict_asymptotic_window": strict,
                    "strict_exponent_criterion_passed": bool(strict is not None),
                    "asymptotic_fickian_confirmed": bool(strict is not None),

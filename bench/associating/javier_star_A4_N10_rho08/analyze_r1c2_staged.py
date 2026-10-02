@@ -272,6 +272,28 @@ def adaptive_stage_decision(rheology, diffusion, renormalized_summary):
             "diagnostic_only": True, "next_stage_not_launched": True}
 
 
+def extension_planning(rheology, diffusion, current_total, target_total=100000.0):
+    """Plan only; T/t_c~50 is a heuristic, not a convergence claim."""
+    cutoffs = []
+    for row in rheology.get("duration_convergence", []):
+        cutoff = row["cutoff"]
+        cutoffs.append({"cutoff": cutoff,
+                        "current_T_over_cutoff": current_total / cutoff,
+                        "planned_T_over_cutoff": target_total / cutoff,
+                        "heuristic_T_over_cutoff_50_passes": target_total / cutoff >= 50,
+                        "currently_supported": row.get("supported_by_block_criteria", False),
+                        "currently_resolved": row.get("T_min_25pct") is not None and
+                                              row.get("supported_by_block_criteria", False)})
+    current_com = diffusion.get("com_duration", current_total - 10000.0)
+    return {"status": "planning_only", "current_total_T": current_total,
+            "planned_total_T": target_total, "heuristic": "T/t_c approximately 50",
+            "heuristic_is_not_convergence": True,
+            "rheology_cutoffs": cutoffs,
+            "com": {"current_observed_duration": current_com,
+                    "planned_observed_duration": target_total - (current_total - current_com),
+                    "material_resolution_gain": "likely for later alpha windows and unresolved long-time dynamics"}}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--r1c1-raw", required=True)
@@ -308,10 +330,10 @@ def main():
             raw, args.volume, args.temperature, args.dt)
         available_duration = float(stress_time[-1])
         durations = duration_grid(available_duration)
-        cutoffs = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500, 750, 1000]
+        cutoffs = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000]
         (duration_summary, duration_rows, cutoff_rows, block_rows, block_summary,
-         uncertainty, tail_bins, terminal, duration_convergence) = nonassoc._rheology_rows(
-            raw, durations, cutoffs, (4, 5, 10), args.volume, args.temperature, args.dt, 1000.0)
+            uncertainty, tail_bins, terminal, duration_convergence) = nonassoc._rheology_rows(
+            raw, durations, cutoffs, (4, 5, 10), args.volume, args.temperature, args.dt, 5000.0)
         cutoff_stability = nonassoc.fixed_cutoff_stability(cutoff_rows)
         plateau = nonassoc.cutoff_plateau(duration_convergence)
         stress_summary = {"G0": float(modulus[0]),
@@ -336,6 +358,7 @@ def main():
         alpha, diffusion = nonassoc.diffusion_diagnostics(com_time, com_msd)
         diffusion["D_nonassoc_reference"] = 1.77e-3
         diffusion["D_vs_nonassoc_ratio"] = diffusion["D"] / 1.77e-3 if diffusion["D"] is not None else None
+        diffusion["com_duration"] = float(com_time[-1])
         diffusion["coefficient_status"] = ("asymptotic_candidate" if diffusion.get("strict_exponent_criterion_passed")
                                             else "effective_candidate_slope")
         diffusion["wording"] = ("candidate effective diffusion slope; linear-fit stability does not establish a long-time diffusion coefficient while the strict Fickian criterion fails"
@@ -353,6 +376,8 @@ def main():
     bare_summary = lifetime_summary(records["bare"], kaplan_meier(records["bare"], args.dt), args.dt)
     renormalized_summary = lifetime_summary(records["renormalized"], kaplan_meier(records["renormalized"], args.dt), args.dt)
     decision = adaptive_stage_decision(rheology, diffusion, renormalized_summary)
+    planning = extension_planning(rheology, diffusion,
+                                  float(raw[-1, 0] * args.dt) if len(raw) else 0.0)
     summary = {"raw_rows": int(len(raw)), "raw_start": int(raw[0, 0]) if len(raw) else None,
                "raw_end": int(raw[-1, 0]) if len(raw) else None,
                "stress": stress_summary,
@@ -368,12 +393,17 @@ def main():
                "diffusion": diffusion,
                "bare_lifetime": bare_summary,
                "renormalized_lifetime": renormalized_summary,
+               "sticker_lifetime_freeze": {"status": "frozen_for_current_observation",
+                                            "bare": bare_summary,
+                                            "renormalized": renormalized_summary,
+                                            "unresolved_quantities": ["rheology", "COM diffusion"]},
                "bare_characteristic_times": characteristic_times(kaplan_meier(records["bare"], args.dt)),
                "renormalized_characteristic_times": characteristic_times(kaplan_meier(records["renormalized"], args.dt)),
                "event_lifetime_censoring": "R1-C2 event-derived lifetimes are left-censored at the R1-C2 start; active observations at the final stage are right-censored.",
                "renormalized_definition": "same-partner detach/reattach is merged; a third-partner creation terminates the pending renormalized episode at the break time.",
                "network_replay": "initial network plus sequential C/B events; exact final-state replay required",
-               "stage_decision": decision}
+               "stage_decision": decision,
+               "extension_to_T100000_planning": planning}
     (out / "r1c2_staged.summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps(summary, indent=2, sort_keys=True))
 

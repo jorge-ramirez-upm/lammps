@@ -37,6 +37,16 @@ class R1C2StagedTest(unittest.TestCase):
         self.assertEqual(decision["recommendation"], "CONTINUE")
         self.assertIn("asymptotic Fickian", decision["reasons"][0])
 
+    def test_extension_plan_is_explicitly_heuristic(self):
+        plan = staged.extension_planning(
+            {"duration_convergence": [{"cutoff": 2000.0,
+                                        "supported_by_block_criteria": True,
+                                        "T_min_25pct": None}]},
+            {"com_duration": 40000.0}, 50000.0)
+        self.assertTrue(plan["heuristic_is_not_convergence"])
+        self.assertEqual(plan["rheology_cutoffs"][0]["planned_T_over_cutoff"], 50.0)
+        self.assertEqual(plan["com"]["planned_observed_duration"], 90000.0)
+
     def test_concatenation_duplicate_gap_and_overlap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

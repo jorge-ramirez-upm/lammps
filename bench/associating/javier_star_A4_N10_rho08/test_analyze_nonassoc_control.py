@@ -88,6 +88,23 @@ class NonassocControlTest(unittest.TestCase):
         self.assertEqual(result["individually_stable_cutoffs"], [1.0, 2.0, 10.0])
         self.assertEqual(result["isolated_later_passes_non_converged"], [10.0])
 
+    def test_unsupported_late_cutoff_cannot_converge(self):
+        rows = [{"source": "nested", "cutoff": 3000.0, "duration": 50000.0,
+                 "eta_cutoff": 10.0, "safe_lag_fraction": 0.06}]
+        result = control.fixed_cutoff_duration_convergence(rows)[0]
+        self.assertFalse(result["supported_by_block_criteria"])
+        self.assertIsNone(result["T_min_25pct"])
+        self.assertEqual(result["status"], "unsupported_safe_lag_or_blocks")
+
+    def test_later_alpha_windows_and_trend_are_reported(self):
+        time = np.arange(0.0, 40000.1, 10.0)
+        msd = time ** 0.6
+        _, result = control.diffusion_diagnostics(time, msd)
+        windows = result["alpha_in_requested_windows"]
+        self.assertEqual([row["window"] for row in windows[-4:]],
+                         ["1000-2000", "2000-4000", "4000-8000", "8000-16000"])
+        self.assertEqual(result["alpha_later_window_trend"], "persistently_subdiffusive")
+
     def test_duration_convergence_uses_suffix_not_first_prefix(self):
         rows = []
         for cutoff, values in ((1.0, (0.5, 1.0, 1.02)), (2.0, (1.0, 1.01, 1.02))):

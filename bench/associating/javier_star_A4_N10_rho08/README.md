@@ -274,5 +274,18 @@ The Stage-2 summary therefore reports `eta_0_status=not established`.
 Candidate COM slopes are mutually similar around `4.7e-4`, but the measured
 logarithmic exponent remains about `0.62` over the principal windows, so this
 is labeled an effective candidate slope rather than a stable long-time
-diffusion coefficient. The diagnostic stage decision is `CONTINUE`; Stage 3
-has not been launched.
+diffusion coefficient. The diagnostic stage decision was `CONTINUE`; Stage 3
+has since completed at cumulative `T=50000`.
+
+Stage 3 analysis at cumulative `T=50000` extends the stress cutoff and
+logarithmic-tail scans through `5000`. Cutoffs `1500` and `2000` have
+block-supported rows but fail the 25% duration/block stability test; `3000`
+and `5000` are retained as descriptive values but are unsupported by the
+safe-lag/block criteria. The first enlarged-range loss of stress resolution
+is at about `t=2911` by both block SEM and SD. COM alpha rises from about
+`0.65` (`1000–2000`) to `0.89` (`8000–16000`), a trend toward 1 without
+passing the strict asymptotic Fickian criterion; the effective candidate slope
+therefore remains non-asymptotic. Sticker-lifetime summaries are frozen
+separately from unresolved rheology and diffusion. The analyzer also writes a
+planning-only `T=100000` section; `T/t_c≈50` is used there as a nonassociating
+empirical heuristic, not as a convergence claim.
