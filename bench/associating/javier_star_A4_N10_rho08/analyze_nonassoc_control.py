@@ -46,6 +46,7 @@ def _rheology_rows(raw, durations, cutoffs, blocks, volume, temperature, dt, max
                                  "G_over_G0_crossing_0.01": r1c1.first_crossing(time, normalized, .01)})
 
     block_rows = []
+    block_values = {nblocks: {} for nblocks in blocks}
     # Use the full common lag grid for the block-resolved tail diagnostic.
     lags = tuple(np.arange(0.0, max_lag + dt / 2.0, dt))
     block_cutoff_rows = []
@@ -57,13 +58,15 @@ def _rheology_rows(raw, durations, cutoffs, blocks, volume, temperature, dt, max
             for lag in lags:
                 if lag <= time[-1]:
                     index = int(round(lag / dt))
-                    block_rows.append({"blocks": nblocks, "block": block, "lag": lag,
-                                       "block_duration": float(time[-1]), "G": float(modulus[index]),
-                                       "eta": float(eta[index])})
+                    row = {"blocks": nblocks, "block": block, "lag": lag,
+                           "block_duration": float(time[-1]), "G": float(modulus[index]),
+                           "eta": float(eta[index])}
+                    block_rows.append(row)
+                    block_values[nblocks].setdefault(lag, []).append(row)
     block_summary = []
     for nblocks in blocks:
         for lag in lags:
-            rows = [row for row in block_rows if row["blocks"] == nblocks and row["lag"] == lag]
+            rows = block_values[nblocks].get(lag, [])
             values = np.array([row["G"] for row in rows])
             etas = np.array([row["eta"] for row in rows])
             if not len(values):
@@ -80,9 +83,11 @@ def _rheology_rows(raw, durations, cutoffs, blocks, volume, temperature, dt, max
     # every requested fixed cutoff.  eta_final at the full trajectory length
     # is deliberately never used as a convergence diagnostic.
     for nblocks in blocks:
-        rows = [row for row in block_rows if row["blocks"] == nblocks]
         for cutoff in cutoffs:
-            values = [row for row in rows if abs(row["lag"] - cutoff) <= dt / 2]
+            lag = min(block_values[nblocks], key=lambda candidate: abs(candidate - cutoff),
+                      default=None)
+            values = (block_values[nblocks].get(lag, [])
+                      if lag is not None and abs(lag - cutoff) <= dt / 2 else [])
             if not values:
                 continue
             etas = np.asarray([row["eta"] for row in values])

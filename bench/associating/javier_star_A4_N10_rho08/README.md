@@ -256,4 +256,16 @@ AUTHORIZE_R1C2=YES LMP=~/lammps/build-r1a/lmp MPI_NP=8 STAGE=1 \
   ./run_r1c2_staged_linux.sh
 ```
 
-No Stage 1, Stage 2, or Stage 3 production run has been launched.
+Stage 1 has since completed. Its repaired analysis is written to
+`r1c2_runs/analysis_stage1_repaired2/` and reports `G(0)=68.1857` and
+`R_iso(0)=0.997537`, with exact network replay valid. Bare episodes have
+`1774` left-censored records (equal to the `1774` initial edges), while the
+renormalized survival has median `1967` time units and `1/e` time `2844`
+time units; both retain explicit censoring metadata and timestep columns.
+The observed COM segment begins at cumulative step `1000000` but is analyzed
+with its first frame as the local MSD origin. It gives candidate associating
+diffusion fits around `5.1–6.6e-4`, not yet stable and not strictly Fickian.
+The expanded fixed-cutoff diagnostics find a descriptive duration-converged
+range through `t_c=500`; this is not an automatic zero-shear-viscosity claim.
+The stage summary is diagnostic only and recommends `CONTINUE`; Stage 2 and
+Stage 3 have not been launched.

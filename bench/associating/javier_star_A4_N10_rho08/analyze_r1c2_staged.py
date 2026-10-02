@@ -153,18 +153,23 @@ def lifetime_records(initial, events, end_timestep=None):
     """Return bare and renormalized records with explicit censoring flags."""
     if end_timestep is None:
         end_timestep = events[-1].timestep if events else 0
-    active = {pair: (None, True) for pair in initial}
+    # Bare episodes and renormalized episodes deliberately have separate
+    # state.  A same-partner reattachment merges only the renormalized
+    # episode; every accepted creation starts a new bare episode.
+    bare_active = {pair: (None, True) for pair in initial}
+    renorm_active = {pair: (None, True) for pair in initial}
     bare = []
     pending = {}
     renormalized = []
     for event in events:
         pair = event.pair
         if event.kind == "B":
-            if pair not in active:
+            if pair not in bare_active or pair not in renorm_active:
                 raise ValueError(f"break of inactive edge at timestep {event.timestep}: {pair}")
-            start, left = active.pop(pair)
+            start, left = bare_active.pop(pair)
             bare.append(_record(start, event.timestep, left, False, "break"))
-            pending[pair] = (start, left, event.timestep)
+            renorm_start, renorm_left = renorm_active.pop(pair)
+            pending[pair] = (renorm_start, renorm_left, event.timestep)
             continue
         # A third-partner creation closes any unresolved same-partner flicker.
         for pending_pair in list(pending):
@@ -173,20 +178,23 @@ def lifetime_records(initial, events, end_timestep=None):
                 renormalized.append(_record(start, break_time, left, False, "third_partner"))
         if pair in pending:
             start, left, _ = pending.pop(pair)
-            active[pair] = (start, left)
+            renorm_active[pair] = (start, left)
+            bare_active[pair] = (event.timestep, False)
         else:
-            if pair in active:
+            if pair in bare_active or pair in renorm_active:
                 raise ValueError(f"creation of active edge at timestep {event.timestep}: {pair}")
-            active[pair] = (event.timestep, False)
-    for pair, (start, left) in active.items():
+            bare_active[pair] = (event.timestep, False)
+            renorm_active[pair] = (event.timestep, False)
+    for pair, (start, left) in bare_active.items():
         bare.append(_record(start, end_timestep, left, True, "right_censored"))
+    for pair, (start, left) in renorm_active.items():
         renormalized.append(_record(start, end_timestep, left, True, "right_censored"))
     for start, left, _ in pending.values():
         renormalized.append(_record(start, end_timestep, left, True, "pending_reattachment"))
     return {"bare": bare, "renormalized": renormalized}
 
 
-def kaplan_meier(records):
+def kaplan_meier(records, dt=0.01):
     """KM curve for records with known durations; left-censored records are excluded."""
     usable = [row for row in records if row["duration"] is not None and not row["left_censored"]]
     times = sorted({row["duration"] for row in usable})
@@ -197,7 +205,8 @@ def kaplan_meier(records):
         censored = sum(row["duration"] == time and row["right_censored"] for row in usable)
         if at_risk:
             survival *= 1.0 - events / at_risk
-        output.append({"time": float(time), "survival": float(survival), "at_risk": int(at_risk),
+        output.append({"time_steps": float(time), "time": float(time * dt),
+                       "survival": float(survival), "at_risk": int(at_risk),
                        "events": int(events), "censored": int(censored)})
     return output
 
@@ -205,9 +214,32 @@ def kaplan_meier(records):
 def characteristic_times(curve):
     result = {}
     for level, name in ((0.5, "median"), (1 / np.e, "one_over_e")):
-        crossing = next((row["time"] for row in curve if row["survival"] <= level), None)
-        result[name] = crossing
+        crossing = next((row for row in curve if row["survival"] <= level), None)
+        result[f"{name}_steps"] = crossing["time_steps"] if crossing else None
+        result[f"{name}_time"] = crossing["time"] if crossing else None
+        result[f"{name}_at_risk"] = crossing["at_risk"] if crossing else None
     return result
+
+
+def lifetime_summary(records, curve, dt=0.01):
+    total = len(records)
+    observed = sum(not row["right_censored"] for row in records)
+    left = sum(row["left_censored"] for row in records)
+    right = sum(row["right_censored"] for row in records)
+    resolved = [row["duration"] for row in records
+                if row["duration"] is not None and not row["left_censored"] and not row["right_censored"]]
+    maximum = max(resolved) if resolved else None
+    return {"total_episodes": total, "observed_terminations": observed,
+            "left_censored_count": left, "left_censored_fraction": left / total if total else None,
+            "right_censored_count": right, "right_censored_fraction": right / total if total else None,
+            "median_steps": characteristic_times(curve)["median_steps"],
+            "median_time": characteristic_times(curve)["median_time"],
+            "median_at_risk": characteristic_times(curve)["median_at_risk"],
+            "one_over_e_steps": characteristic_times(curve)["one_over_e_steps"],
+            "one_over_e_time": characteristic_times(curve)["one_over_e_time"],
+            "one_over_e_at_risk": characteristic_times(curve)["one_over_e_at_risk"],
+            "maximum_resolved_steps": maximum,
+            "maximum_resolved_time": maximum * dt if maximum is not None else None}
 
 
 def write_csv(path, fields, rows):
@@ -246,19 +278,61 @@ def main():
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     np.savetxt(out / "r1c2_combined.raw", raw, header="step Pxx Pyy Pzz Pxy Pxz Pyz", comments="")
     stress_summary = {}
+    rheology = {}
     if len(raw):
         stress_time, cs, cn, difference, modulus, eta = r1c1._modulus(
             raw, args.volume, args.temperature, args.dt)
+        available_duration = float(stress_time[-1])
+        durations = [duration for duration in (5000, 10000, 15000, 20000) if duration <= available_duration]
+        cutoffs = [1, 2, 5, 10, 20, 50, 100, 200, 300, 500, 750, 1000]
+        (duration_summary, duration_rows, cutoff_rows, block_rows, block_summary,
+         uncertainty, tail_bins, terminal, duration_convergence) = nonassoc._rheology_rows(
+            raw, durations, cutoffs, (4, 5, 10), args.volume, args.temperature, args.dt, 1000.0)
+        cutoff_stability = nonassoc.fixed_cutoff_stability(cutoff_rows)
+        plateau = nonassoc.cutoff_plateau(duration_convergence)
         stress_summary = {"G0": float(modulus[0]),
                           "R_iso_0": float(cn[0] / cs[0]) if cs[0] else None,
-                          "fixed_cutoff_eta": {str(cutoff): float(eta[min(int(round(cutoff / args.dt)), len(eta) - 1)])
-                                                for cutoff in (10, 20, 50, 100, 200)
-                                                if cutoff <= stress_time[-1]},
+                          "fixed_cutoff_eta_full_trajectory": {str(cutoff): float(eta[min(int(round(cutoff / args.dt)), len(eta) - 1)])
+                                                                for cutoff in cutoffs if cutoff <= stress_time[-1]},
                           "definition": "offline modulus from concatenated raw stress; fixed-cutoff values are descriptive and do not by themselves establish eta_0"}
+        rheology = {"duration_summary": duration_summary, "duration_convergence": duration_convergence,
+                    "cutoff_stability": cutoff_stability, "cutoff_plateau": plateau,
+                    "slow_tail": terminal,
+                    "eta0_status": plateau["eta0_status"]}
+        write_csv(out / "r1c2_duration_convergence.csv", list(duration_convergence[0]) if duration_convergence else ["cutoff"], duration_convergence)
+        write_csv(out / "r1c2_fixed_cutoff.csv",
+                  ["source", "duration", "cutoff", "blocks", "eta_cutoff", "eta_sd", "eta_sem", "safe_lag_fraction"], cutoff_rows)
+        write_csv(out / "r1c2_slow_tail_bins.csv",
+                  ["blocks", "lag_start", "lag_end", "lag_center", "G_mean", "G_sd", "G_sem", "n_samples", "n_lag_points"], tail_bins)
+    else:
+        rheology = {"eta0_status": "not established", "reason": "empty concatenated stress trajectory"}
+    if com_frames:
+        com = np.stack([frame[1] for frame in com_frames])
+        com_time, com_msd = nonassoc.msd_from_com(com, (com_frames[1][0] - com_frames[0][0]) * args.dt)
+        alpha, diffusion = nonassoc.diffusion_diagnostics(com_time, com_msd)
+        diffusion["D_nonassoc_reference"] = 1.77e-3
+        diffusion["D_vs_nonassoc_ratio"] = diffusion["D"] / 1.77e-3 if diffusion["D"] is not None else None
+        diffusion["wording"] = "stable long-time diffusion coefficient with motion approaching/consistent with the Fickian regime; not a claim of a perfectly asymptotic alpha=1 plateau"
+        write_csv(out / "r1c2_com_msd.csv", ["time", "g_CM", "alpha"],
+                  (dict(time=float(t), g_CM=float(g), alpha=float(a)) for t, g, a in zip(com_time, com_msd, alpha)))
+    else:
+        diffusion = {"D": None, "D_candidate_stable": False, "strict_exponent_criterion_passed": False,
+                     "asymptotic_fickian_confirmed": False, "reason": "no COM frames"}
     for name in ("bare", "renormalized"):
-        curve = kaplan_meier(records[name])
+        curve = kaplan_meier(records[name], args.dt)
         write_csv(out / f"r1c2_{name}_survival.csv",
-                  ["time", "survival", "at_risk", "events", "censored"], curve)
+                  ["time_steps", "time", "survival", "at_risk", "events", "censored"], curve)
+    bare_summary = lifetime_summary(records["bare"], kaplan_meier(records["bare"], args.dt), args.dt)
+    renormalized_summary = lifetime_summary(records["renormalized"], kaplan_meier(records["renormalized"], args.dt), args.dt)
+    reasons = []
+    if rheology.get("eta0_status") != "supported descriptively":
+        reasons.append("zero-shear viscosity plateau is not established")
+    if not diffusion.get("D_candidate_stable", False):
+        reasons.append("associating COM diffusion fit is not yet stable")
+    if renormalized_summary["one_over_e_time"] is None:
+        reasons.append("renormalized survival has no resolved 1/e crossing")
+    decision = {"recommendation": "CONTINUE" if reasons else "STOP", "reasons": reasons,
+                "diagnostic_only": True, "next_stage_not_launched": True}
     summary = {"raw_rows": int(len(raw)), "raw_start": int(raw[0, 0]) if len(raw) else None,
                "raw_end": int(raw[-1, 0]) if len(raw) else None,
                "stress": stress_summary,
@@ -270,11 +344,16 @@ def main():
                "final_network_replay_valid": True,
                "left_censored": {name: sum(row["left_censored"] for row in records[name]) for name in records},
                "right_censored": {name: sum(row["right_censored"] for row in records[name]) for name in records},
-               "bare_characteristic_times": characteristic_times(kaplan_meier(records["bare"])),
-               "renormalized_characteristic_times": characteristic_times(kaplan_meier(records["renormalized"])),
+               "rheology": rheology,
+               "diffusion": diffusion,
+               "bare_lifetime": bare_summary,
+               "renormalized_lifetime": renormalized_summary,
+               "bare_characteristic_times": characteristic_times(kaplan_meier(records["bare"], args.dt)),
+               "renormalized_characteristic_times": characteristic_times(kaplan_meier(records["renormalized"], args.dt)),
                "event_lifetime_censoring": "R1-C2 event-derived lifetimes are left-censored at the R1-C2 start; active observations at the final stage are right-censored.",
                "renormalized_definition": "same-partner detach/reattach is merged; a third-partner creation terminates the pending renormalized episode at the break time.",
-               "network_replay": "initial network plus sequential C/B events; exact final-state replay required"}
+               "network_replay": "initial network plus sequential C/B events; exact final-state replay required",
+               "stage_decision": decision}
     (out / "r1c2_staged.summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps(summary, indent=2, sort_keys=True))
 

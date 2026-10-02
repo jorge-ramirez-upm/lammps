@@ -58,13 +58,52 @@ class R1C2StagedTest(unittest.TestCase):
         self.assertTrue(any(row["right_censored"] for row in renorm))
         self.assertTrue(any(row["left_censored"] for row in records["bare"]))
 
+    def test_bare_restarts_but_renormalized_episode_continues(self):
+        initial = {(1, 2)}
+        events = [
+            staged.Event(10, "B", 1, 2, 1, 1),
+            staged.Event(11, "C", 1, 2, 1, 1),
+            staged.Event(14, "B", 1, 2, 1, 1),
+        ]
+        records = staged.lifetime_records(initial, events, end_timestep=20)
+        bare = records["bare"]
+        renorm = records["renormalized"]
+        self.assertEqual(sum(row["left_censored"] for row in bare), 1)
+        observed_bare = [row for row in bare if not row["right_censored"]]
+        self.assertEqual([(row["start"], row["end"], row["left_censored"])
+                          for row in observed_bare], [(None, 10, True), (11, 14, False)])
+        self.assertEqual(len(renorm), 1)
+        self.assertEqual((renorm[0]["start"], renorm[0]["end"], renorm[0]["duration"],
+                          renorm[0]["right_censored"]), (None, 20, None, True))
+
+    def test_repeated_flickers_and_third_partner(self):
+        initial = {(1, 2)}
+        events = [
+            staged.Event(2, "B", 1, 2, 1, 1),
+            staged.Event(3, "C", 1, 2, 1, 1),
+            staged.Event(5, "B", 1, 2, 1, 1),
+            staged.Event(6, "C", 1, 2, 1, 1),
+            staged.Event(8, "B", 1, 2, 1, 1),
+            staged.Event(9, "C", 1, 3, 1, 2),
+        ]
+        records = staged.lifetime_records(initial, events, end_timestep=20)
+        bare_observed = [row for row in records["bare"] if not row["right_censored"]]
+        self.assertEqual(len(bare_observed), 3)
+        self.assertEqual(sum(row["left_censored"] for row in records["bare"]), 1)
+        renorm_observed = [row for row in records["renormalized"] if not row["right_censored"]]
+        self.assertEqual(len(renorm_observed), 1)
+        self.assertEqual(renorm_observed[0]["termination"], "third_partner")
+        self.assertEqual(renorm_observed[0]["end"], 8)
+
     def test_bare_and_renormalized_survival(self):
         initial = set()
         events = [staged.Event(1, "C", 1, 2, 1, 1), staged.Event(4, "B", 1, 2, 1, 1)]
         records = staged.lifetime_records(initial, events, end_timestep=10)
         curve = staged.kaplan_meier(records["bare"])
         self.assertEqual(curve[-1]["events"], 1)
-        self.assertEqual(staged.characteristic_times(curve)["median"], 3.0)
+        self.assertEqual(staged.characteristic_times(curve)["median_steps"], 3.0)
+        self.assertEqual(staged.characteristic_times(curve)["median_time"], 0.03)
+        self.assertEqual(curve[-1]["time"], 0.03)
 
     def test_malformed_event_and_network_rows(self):
         with tempfile.TemporaryDirectory() as directory:
