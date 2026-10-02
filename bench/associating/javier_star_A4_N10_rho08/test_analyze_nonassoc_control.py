@@ -101,8 +101,9 @@ class NonassocControlTest(unittest.TestCase):
         msd = time ** 0.6
         _, result = control.diffusion_diagnostics(time, msd)
         windows = result["alpha_in_requested_windows"]
-        self.assertEqual([row["window"] for row in windows[-4:]],
-                         ["1000-2000", "2000-4000", "4000-8000", "8000-16000"])
+        self.assertEqual([row["window"] for row in windows[-6:]],
+                         ["1000-2000", "2000-4000", "4000-8000", "8000-16000",
+                          "16000-32000", "32000-45000"])
         self.assertEqual(result["alpha_later_window_trend"], "persistently_subdiffusive")
 
     def test_duration_convergence_uses_suffix_not_first_prefix(self):

@@ -306,6 +306,22 @@ network, restart, provenance, and completion files under
 The cumulative analyzer should then be run with `--stage-dir` for stages 1,
 2, 3, and 4; its existing dynamic duration grid reaches `T=100000`.
 
+The final offline consolidation is generated with:
+
+```bash
+python3 consolidate_r1c2_final.py r1c2_runs/analysis_stage4 \
+  --nonassoc nonassoc_control_conclusions.json
+```
+
+For the completed `T=100000` trajectory this reports a late-prefix
+`t_c=2000–5000` finite-window plateau, `eta_0≈75.1±13.0` with cutoff values
+`68.4, 77.0, 80.0`, and no statistically significant residual bracket beyond
+the `t≈2911` SEM-resolution loss. COM alpha rises to `0.947` and `0.956` in
+the `16000–32000` and `32000–45000` windows. The diffusion result remains
+`effective_candidate_slope` (`D_eff≈4.43e-4`), while sticker medians/1/e times
+are treated as mature observables. The machine-readable and Markdown reports
+end with `PRODUCTION_SUFFICIENT`, with these finite-window qualifications.
+
 Because the existing Stage 1–3 completion markers predate output-restart
 hashes, run this one-time migration before Stage 4:
 

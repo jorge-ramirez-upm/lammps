@@ -446,7 +446,9 @@ def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
                                                               (1000.0, 2000.0),
                                                               (2000.0, 4000.0),
                                                               (4000.0, 8000.0),
-                                                              (8000.0, 16000.0))):
+                                                              (8000.0, 16000.0),
+                                                              (16000.0, 32000.0),
+                                                              (32000.0, 45000.0))):
     valid = (time > 0) & (msd > 0)
     alpha = _rolling_log_exponent(time, msd)
     limit = float(time[-1] * max_fraction)
@@ -487,10 +489,20 @@ def diffusion_diagnostics(time, msd, max_fraction=0.2, exponent_tolerance=0.2,
         means = [row["alpha_mean"] for row in finite_later]
         trend = ("toward_1" if means[-1] > means[0] + 0.05 else
                  "persistently_subdiffusive" if max(means) < 0.9 else "mixed_or_flat")
+    late_consistency = []
+    for row, (left, right) in zip(later, alpha_windows[3:]):
+        selected = np.isfinite(alpha) & (time >= left) & (time <= right)
+        values = alpha[selected]
+        late_consistency.append({"window": row["window"],
+                                 "fraction_within_exponent_tolerance":
+                                     float(np.mean(abs(values - 1.0) <= 0.1)) if len(values) else None,
+                                 "duration": float(right - left),
+                                 "admissible": bool(len(values) >= 100 and right > left)})
     return alpha, {"D": diffusion, "D_candidates": fits,
                    "D_candidate_stable": stable,
                    "alpha_in_requested_windows": _alpha_window_stats(time, alpha, alpha_windows),
                    "alpha_later_window_trend": trend,
+                   "late_window_fickian_consistency": late_consistency,
                    "strict_asymptotic_window": strict,
                    "strict_exponent_criterion_passed": bool(strict is not None),
                    "asymptotic_fickian_confirmed": bool(strict is not None),
