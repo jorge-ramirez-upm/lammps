@@ -20,6 +20,7 @@ class R1C2StagedTest(unittest.TestCase):
         self.assertEqual(staged.duration_grid(30000),
                          [5000.0, 10000.0, 15000.0, 20000.0, 25000.0, 30000.0])
         self.assertEqual(staged.duration_grid(50000)[-3:], [40000.0, 45000.0, 50000.0])
+        self.assertEqual(staged.duration_grid(100000)[-3:], [90000.0, 95000.0, 100000.0])
 
     def test_longer_prefix_can_remove_apparent_cutoff_convergence(self):
         rows = []
@@ -57,6 +58,22 @@ class R1C2StagedTest(unittest.TestCase):
             self.assertEqual(len(staged.concatenate_raw([a, b])), 4)
             with self.assertRaises(ValueError): staged.concatenate_raw([a, gap])
             with self.assertRaises(ValueError): staged.concatenate_raw([a, mismatch])
+
+    def test_four_stage_concatenation_and_event_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            paths = []
+            for index, steps in enumerate(([0, 1], [1, 2], [2, 3], [3, 4]), 1):
+                path = root / f"stage{index}.raw"
+                path.write_text("# step Pxx Pyy Pzz Pxy Pxz Pyz\n" +
+                                "\n".join(f"{step} 1 1 1 0 0 0" for step in steps) + "\n")
+                paths.append(path)
+            combined = staged.concatenate_raw(paths)
+            self.assertEqual(int(combined[-1, 0]), 4)
+            initial = {(1, 2)}
+            events = [staged.Event(2, "B", 1, 2, 1, 1),
+                      staged.Event(3, "C", 1, 3, 1, 2)]
+            self.assertEqual(staged.replay_network(initial, events), {(1, 3)})
 
     def test_com_continuation_duplicate_and_gap(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -153,6 +170,37 @@ class R1C2StagedTest(unittest.TestCase):
                                 text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("AUTHORIZE_R1C2", result.stderr)
+
+    def test_stage4_defaults_gate_and_provenance_contract(self):
+        launcher = (HERE / "run_r1c2_staged_linux.sh").read_text()
+        self.assertIn('4) STAGE_STEPS=${STAGE_STEPS:-5000000}', launcher)
+        self.assertIn('DEFAULT_RESTART="$OUT/stage3/production.restart"', launcher)
+        self.assertIn('grep -q \'stage=3 \' "$OUT/stage3/complete"', launcher)
+        self.assertIn('restart_sha256=', launcher)
+        self.assertIn('initial_timestep=', launcher)
+        self.assertIn('final_timestep=', launcher)
+        self.assertIn('event_path=$event_log', launcher)
+
+    def test_stage4_refuses_without_stage3_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = os.environ.copy()
+            environment.update({"AUTHORIZE_R1C2": "YES", "LMP": "/bin/true",
+                                "OUT": directory, "STAGE": "4"})
+            result = subprocess.run([str(HERE / "run_r1c2_staged_linux.sh")],
+                                    cwd=HERE, env=environment, text=True,
+                                    capture_output=True)
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("Stage 3 is not complete", result.stderr)
+
+    def test_stage4_uses_stage3_as_only_resume_source_and_no_initial_network(self):
+        launcher = (HERE / "run_r1c2_staged_linux.sh").read_text()
+        self.assertIn('[[ "$restart_candidate" == "$expected_restart" ]]', launcher)
+        self.assertIn('4) STAGE_STEPS=${STAGE_STEPS:-5000000}; DEFAULT_RESTART="$OUT/stage3/production.restart"; WRITE_INITIAL=0', launcher)
+
+    def test_stage4_input_preserves_snapshot_boundary_without_new_history_origin(self):
+        input_text = (HERE / "in.r1c2_stage.lmp").read_text()
+        self.assertIn('write_associating_network ${FINAL_NETWORK} fix kinetics', input_text)
+        self.assertIn('if "${WRITE_INITIAL} == 1" then "write_associating_network ${INITIAL_NETWORK} fix kinetics"', input_text)
 
     def test_stage_input_variables_are_supplied(self):
         input_text = (HERE / "in.r1c2_stage.lmp").read_text()

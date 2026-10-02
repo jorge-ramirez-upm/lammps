@@ -289,3 +289,19 @@ therefore remains non-asymptotic. Sticker-lifetime summaries are frozen
 separately from unresolved rheology and diffusion. The analyzer also writes a
 planning-only `T=100000` section; `T/t_c≈50` is used there as a nonassociating
 empirical heuristic, not as a convergence claim.
+
+Stage 4 is prepared but intentionally not launched. After confirming the
+Stage-3 completion marker and restart checksum, launch it from this directory
+with:
+
+```bash
+AUTHORIZE_R1C2=YES LMP=~/lammps/build-r1a/lmp MPI_NP=8 STAGE=4 \
+  ./run_r1c2_staged_linux.sh
+```
+
+It defaults to `5,000,000` steps from
+`r1c2_runs/stage3/production.restart`, writes the Stage-4 raw/GT/COM/event,
+network, restart, provenance, and completion files under
+`r1c2_runs/stage4/`, and refuses overwrite or a mismatched Stage-3 restart.
+The cumulative analyzer should then be run with `--stage-dir` for stages 1,
+2, 3, and 4; its existing dynamic duration grid reaches `T=100000`.
