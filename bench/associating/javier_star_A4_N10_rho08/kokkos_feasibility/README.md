@@ -102,3 +102,7 @@ RUN_BENCHMARKS=1 MEASURE_STEPS=50000 ./run_decomp.sh kk1 stress 1 10
 
 The `stress` fourth argument is the raw-stress cadence; generated `runs/`
 artifacts are intentionally ignored because they include large raw/COM files.
+
+The follow-on device-resident stress design study is documented in
+[`device_stress_buffer_design.md`](device_stress_buffer_design.md). It is
+analysis only; no stress-buffer implementation has been started.
